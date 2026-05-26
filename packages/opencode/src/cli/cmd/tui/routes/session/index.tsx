@@ -1720,12 +1720,12 @@ function GenericTool(props: ToolProps<any>) {
       when={props.output && ctx.showGenericToolOutput()}
       fallback={
         <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
-          {props.tool} {input(props.input)}
+          {props.tool} {input(props.input, toolOmit(props.tool))}
         </InlineTool>
       }
     >
       <BlockTool
-        title={`# ${props.tool} ${input(props.input)}`}
+        title={`# ${props.tool} ${input(props.input, toolOmit(props.tool))}`}
         part={props.part}
         onClick={collapsed().overflow ? () => setExpanded((prev) => !prev) : undefined}
       >
@@ -2344,7 +2344,20 @@ function input(input: Record<string, any>, omit?: string[]): string {
     return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
   })
   if (primitives.length === 0) return ""
-  return `[${primitives.map(([key, value]) => `${key}=${value}`).join(", ")}]`
+  return `[${primitives
+    .map(([key, value]) => {
+      if (typeof value === "string" && value.includes("\n")) {
+        const firstLine = value.split(/\r?\n/)[0]
+        return `${key}=${firstLine}…`
+      }
+      return `${key}=${value}`
+    })
+    .join(", ")}]`
+}
+
+function toolOmit(tool: string): string[] | undefined {
+  if (tool === "memory") return ["old_str"]
+  return undefined
 }
 
 function filetype(input?: string) {
