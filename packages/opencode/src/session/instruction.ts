@@ -11,9 +11,9 @@ import { Global } from "@opencode-ai/core/global"
 import type { MessageV2 } from "./message-v2"
 import type { MessageID } from "./schema"
 
-const files = (disableClaudeCodePrompt: boolean) => [
+const files = (_disableClaudeCodePrompt: boolean) => [
   "AGENTS.md",
-  ...(disableClaudeCodePrompt ? [] : ["CLAUDE.md"]),
+  // CLAUDE.md auto-loading disabled in this fork — opencode reads only AGENTS.md.
   "CONTEXT.md", // deprecated
 ]
 
@@ -62,7 +62,7 @@ export const layer: Layer.Layer<
     const http = HttpClient.filterStatusOk(withTransientReadRetry(yield* HttpClient.HttpClient))
     const globalFiles = [
       path.join(global.config, "AGENTS.md"),
-      ...(!flags.disableClaudeCodePrompt ? [path.join(global.home, ".claude", "CLAUDE.md")] : []),
+      // ~/.claude/CLAUDE.md auto-loading disabled in this fork.
     ]
     const instructionFiles = files(flags.disableClaudeCodePrompt)
 

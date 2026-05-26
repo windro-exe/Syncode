@@ -133,3 +133,58 @@ const table = sqliteTable("session", {
 ## Type Checking
 
 - Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+
+---
+
+## wnxd local fork (NOT upstream)
+
+The section below is specific to wnxd's local clone. It does not exist upstream and is intended for any agent (opencode itself, Claude Code, etc.) working ON this codebase.
+
+### Layout
+
+- Origin: `https://github.com/anomalyco/opencode.git`
+- Working branch: **`wnxd`** — every local feature commits here.
+- Build: `bun run build` from `packages/opencode`. Output is a real production single-exe (~143 MB), bundled and minified — there is no separate "prod vs dev" binary.
+
+### Local features layered on top of upstream
+
+- **Memory system** (`packages/opencode/src/memory/`, `src/tool/memory.ts`, `src/tool/memory.txt`, `migration/2026*_memory_system/`).
+  - Two-tier persistent memory (`global` + `session`) backed by SQLite + FTS5
+  - Replaces upstream's compaction loop: the prompt loop's overflow auto-trigger is neutered in `src/session/prompt.ts`, the system prompt now includes a live memory index in `src/session/system.ts`, and the `/remember` slash in `src/cli/cmd/tui/routes/session/index.tsx` pre-fills a snapshot directive
+  - The model is responsible for persisting durable facts to memory before context overflows, instead of relying on summarization
+- **`CLAUDE.md` auto-loading disabled** in `src/session/instruction.ts`. opencode reads only `AGENTS.md` (this file) and the deprecated `CONTEXT.md`. The user does not want Claude Code's user-level rules bleeding into opencode sessions.
+
+Add new features here as they land.
+
+### Upgrade workflow — DO NOT use the in-app auto-updater
+
+The user has explicitly said: never let the auto-updater run. It will overwrite `~/.local/bin/opencode.exe` with the upstream npm release and erase every local feature.
+
+Concretely:
+
+- The TUI's "Update Available" prompt: always answer **Skip**, never Confirm.
+- Never run `bun upgrade`, `opencode upgrade`, or any equivalent install script that pulls from GitHub releases or npm.
+- The version stamp (`OPENCODE_VERSION` baked at build time) is set high on purpose so the in-app upgrader's release-type check doesn't auto-install anything. If you see `1.16.0-wnxd` or higher, that's intentional — don't "fix" it down.
+
+When the user wants to take an upstream update:
+
+1. They will explicitly tell you ("update from upstream", "pull the latest opencode", etc.).
+2. From `wnxd` branch: `git fetch origin && git merge origin/dev` — resolve conflicts in the local-feature files (memory system, /remember, prompt loop neutering, instruction.ts).
+3. Run `bun typecheck` from `packages/opencode` and fix anything broken before building.
+4. Rebuild with the version stamp:
+   ```bash
+   OPENCODE_VERSION=<new-stamp> bun run build
+   ```
+   Pick a stamp that semver-compares ABOVE the latest upstream npm release.
+5. Install (Windows file lock requires rename-swap if a TUI is running):
+   ```bash
+   mv ~/.local/bin/opencode.exe ~/.local/bin/opencode.exe.old
+   cp packages/opencode/dist/opencode-windows-x64/bin/opencode.exe ~/.local/bin/opencode.exe
+   ```
+6. Smoke test: `~/.local/bin/opencode.exe --version` should print the new stamp.
+
+### Memory profiling
+
+The first time a model boots a session, the bootstrap in `src/memory/bootstrap.ts` auto-detects username/host/OS/CPU/RAM/node/bun/shell and seeds `/memories/system.md`. It also creates a `/memories/agent.md` template that prompts the model to ask the user once for name/style/personality, then saves the answers. After that, never ask again unless the user says "forget my prefs".
+
+Beyond the first-session ask, the agent should learn organically — when something durable surfaces, save it to memory (global scope for cross-session, session for current conversation only). Use the memory tool's `search` command before starting any task to recall relevant prior context.
