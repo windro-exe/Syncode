@@ -94,6 +94,29 @@ export const layer = Layer.effect(
             )
           return `  ${label}:\n${lines.join("\n")}`
         }
+
+        const inlineEntry = yield* memorySvc
+          .view({ scope: "global", path: "/memories/agent.md", ctx: { sessionID } })
+          .pipe(Effect.orElseSucceed(() => undefined))
+        const agentBlock = (() => {
+          if (!inlineEntry || !inlineEntry.entry) return null
+          const content = inlineEntry.entry.content
+          const unfilled = /_unset_/.test(content)
+          if (unfilled) {
+            return [
+              "<agent-preferences status=\"unfilled\">",
+              "The /memories/agent.md file is shown below. The user has NOT yet filled it in. On your VERY FIRST reply this session, before doing anything else, ask the three questions in the file (name, style, personality), wait for the user's answers, then save them by calling the memory tool with command=str_replace to overwrite the `_unset_` markers in /memories/agent.md (scope=global). Then continue with the user's actual request.",
+              content,
+              "</agent-preferences>",
+            ].join("\n")
+          }
+          return [
+            "<agent-preferences status=\"filled\">",
+            content,
+            "</agent-preferences>",
+          ].join("\n")
+        })()
+
         return [
           "<memory>",
           "You have a persistent memory tool. ALWAYS check memory before starting a task and save durable facts as you learn them.",
@@ -104,6 +127,7 @@ export const layer = Layer.effect(
           "Index of what is already in memory:",
           fmt("global", idx.global),
           fmt("session", idx.session),
+          ...(agentBlock ? ["", agentBlock] : []),
           "</memory>",
         ].join("\n")
       }),
