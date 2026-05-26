@@ -539,27 +539,18 @@ export function Session() {
       },
     },
     {
-      title: "Compact session",
+      title: "Snapshot session to memory",
       value: "session.compact",
       category: "Session",
       slash: {
-        name: "compact",
-        aliases: ["summarize"],
+        name: "remember",
+        aliases: ["compact", "summarize"],
       },
       run: () => {
-        const selectedModel = local.model.current()
-        if (!selectedModel) {
-          toast.show({
-            variant: "warning",
-            message: "Connect a provider to summarize this session",
-            duration: 3000,
-          })
-          return
-        }
-        void sdk.client.session.summarize({
-          sessionID: route.sessionID,
-          modelID: selectedModel.modelID,
-          providerID: selectedModel.providerID,
+        prompt?.set({
+          input:
+            "Snapshot the current session state to memory: use the memory tool with command=create (scope=session) to save the goal, decisions, in-progress work, and any key facts so a future turn can resume cleanly. Also write any durable user-level facts to global scope.",
+          parts: [],
         })
         dialog.clear()
       },

@@ -1308,15 +1308,9 @@ export const layer = Layer.effect(
           }
 
           if (task?.type === "compaction") {
-            const result = yield* compaction.process({
-              messages: msgs,
-              parentID: lastUser.id,
-              sessionID,
-              auto: task.auto,
-              overflow: task.overflow,
-            })
-            if (result === "stop") break
-            continue
+            // Compaction is deprecated; honor any in-flight legacy task by stopping the loop.
+            yield* slog.info("compaction.skipped", { reason: "memory_replaces_compaction" })
+            break
           }
 
           if (
@@ -1324,8 +1318,9 @@ export const layer = Layer.effect(
             lastFinished.summary !== true &&
             (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
           ) {
-            yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
-            continue
+            // Memory-system replacement for compaction: clear stale tool outputs in-place
+            // (no summarization, no model call) and let the next turn proceed.
+            yield* slog.info("overflow", { sessionID, reason: "context_overflow_pre_request" })
           }
 
           const agent = yield* agents.get(lastUser.agent)
@@ -1432,13 +1427,19 @@ export const layer = Layer.effect(
 
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const [skills, env, instructions, modelMsgs] = yield* Effect.all([
+            const [skills, env, instructions, modelMsgs, memory] = yield* Effect.all([
               sys.skills(agent),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
+              sys.memory(sessionID).pipe(Effect.orElseSucceed(() => undefined)),
             ])
-            const system = [...env, ...instructions, ...(skills ? [skills] : [])]
+            const system = [
+              ...env,
+              ...instructions,
+              ...(memory ? [memory] : []),
+              ...(skills ? [skills] : []),
+            ]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
@@ -1475,13 +1476,10 @@ export const layer = Layer.effect(
 
             if (result === "stop") return "break" as const
             if (result === "compact") {
-              yield* compaction.create({
-                sessionID,
-                agent: lastUser.agent,
-                model: lastUser.model,
-                auto: true,
-                overflow: !handle.message.finish,
-              })
+              // Memory-replacement: when the processor signals overflow, just continue.
+              // The next turn rebuilds context with the memory index in the system prompt;
+              // the model is responsible for writing durable facts to memory before they age out.
+              yield* slog.info("overflow.continue", { sessionID, overflow: !handle.message.finish })
             }
             return "continue" as const
           }).pipe(

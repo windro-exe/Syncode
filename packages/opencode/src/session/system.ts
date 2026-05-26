@@ -13,8 +13,11 @@ import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
+import type { SessionID } from "./schema"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
+import { Memory } from "@/memory/memory"
+import { ensureGlobalSeeds } from "@/memory/bootstrap"
 
 export function provider(model: Provider.Model) {
   if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
@@ -35,6 +38,7 @@ export function provider(model: Provider.Model) {
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+  readonly memory: (sessionID: SessionID) => Effect.Effect<string | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
@@ -43,6 +47,7 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const skill = yield* Skill.Service
+    const memorySvc = yield* Memory.Service
 
     return Service.of({
       environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
@@ -75,10 +80,37 @@ export const layer = Layer.effect(
           Skill.fmt(list, { verbose: true }),
         ].join("\n")
       }),
+
+      memory: Effect.fn("SystemPrompt.memory")(function* (sessionID: SessionID) {
+        yield* ensureGlobalSeeds(memorySvc).pipe(Effect.ignore)
+        const idx = yield* memorySvc.index({ ctx: { sessionID } })
+        const fmt = (label: string, list: typeof idx.global) => {
+          if (list.length === 0) return `  ${label}: (empty)`
+          const lines = list
+            .slice(0, 32)
+            .map(
+              (e) =>
+                `    - ${e.path}${e.title ? ` — ${e.title}` : ""}${e.tags.length ? `  [${e.tags.join(",")}]` : ""}`,
+            )
+          return `  ${label}:\n${lines.join("\n")}`
+        }
+        return [
+          "<memory>",
+          "You have a persistent memory tool. ALWAYS check memory before starting a task and save durable facts as you learn them.",
+          "Two scopes:",
+          "  - global: persists across every session (user prefs, system info, conventions, lessons)",
+          "  - session: only this conversation (current plan, in-flight thoughts)",
+          "Use `memory` tool with command=view to read entries, command=create/str_replace/insert to update, command=search to query.",
+          "Index of what is already in memory:",
+          fmt("global", idx.global),
+          fmt("session", idx.session),
+          "</memory>",
+        ].join("\n")
+      }),
     })
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer), Layer.provide(Memory.defaultLayer))
 
 export * as SystemPrompt from "./system"

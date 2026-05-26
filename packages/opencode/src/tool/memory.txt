@@ -1,0 +1,32 @@
+Persistent memory across sessions and within a session.
+
+Two scopes:
+- `global` — survives across every session. Use for the user's name, system info, durable preferences, learned conventions, lessons.
+- `session` — only this session. Use for the current task plan, in-flight thoughts, transient notes you want to revisit a few turns later.
+
+Operations:
+- `view` — list a directory or read a file (use `path: "/memories"` to list everything; pass a `view_range: [start, end]` for slices)
+- `create` — create a new file (`path` must start with `/memories/`); errors if the path already exists
+- `str_replace` — replace one exact occurrence of `old_str` with `new_str` in a file
+- `insert` — insert text at a specific line number (0 = before line 1)
+- `delete` — delete a file or directory (recursive)
+- `rename` — move/rename a file
+- `search` — full-text search ranked by relevance × recency × access frequency. Returns the top matches with snippets.
+
+Memory protocol:
+- ALWAYS call `view` on `/memories` (in both scopes) at the start of a task to see what is known.
+- Save things you would want a future session to remember (durable preferences, system facts, lessons, conventions) to `global`.
+- Save in-flight task state (the plan, decisions you just made, files you are working on) to `session`.
+- Keep entries concise and well-titled. Update existing entries with `str_replace`/`insert` rather than creating duplicates.
+- Delete or rename stale entries when the user contradicts them.
+- Memory persists across context resets. Treat your active context as ephemeral; treat memory as durable.
+
+Path rules:
+- All paths MUST start with `/memories/`.
+- Use forward slashes. No `..`. No absolute filesystem paths.
+
+Examples:
+  view {scope: "global", path: "/memories"}
+  create {scope: "global", path: "/memories/preferences.md", content: "..."}
+  str_replace {scope: "global", path: "/memories/preferences.md", old_str: "...", new_str: "..."}
+  search {query: "shell preferences", scope: "global"}

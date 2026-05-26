@@ -12,6 +12,7 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { MemoryTool } from "./memory"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -53,6 +54,7 @@ import { Permission } from "@/permission"
 import { Reference } from "@/reference/reference"
 import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { Memory } from "@/memory/memory"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -104,6 +106,7 @@ export const layer: Layer.Layer<
   | Format.Service
   | Truncate.Service
   | RuntimeFlags.Service
+  | Memory.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -132,6 +135,7 @@ export const layer: Layer.Layer<
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const memorytool = yield* MemoryTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -237,6 +241,7 @@ export const layer: Layer.Layer<
           repo_clone: Tool.init(repoClone),
           repo_overview: Tool.init(repoOverview),
           skill: Tool.init(skilltool),
+          memory: Tool.init(memorytool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -260,6 +265,7 @@ export const layer: Layer.Layer<
             tool.search,
             ...(flags.experimentalScout ? [tool.repo_clone, tool.repo_overview] : []),
             tool.skill,
+            tool.memory,
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
@@ -391,7 +397,7 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Format.defaultLayer),
       Layer.provide(CrossSpawnSpawner.defaultLayer),
       Layer.provide(Ripgrep.defaultLayer),
-      Layer.provide(Truncate.defaultLayer),
+      Layer.provide(Layer.mergeAll(Truncate.defaultLayer, Memory.defaultLayer)),
     )
     .pipe(Layer.provide(RuntimeFlags.defaultLayer)),
 )
