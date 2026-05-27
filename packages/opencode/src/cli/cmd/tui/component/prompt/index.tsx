@@ -1772,7 +1772,7 @@ export function Prompt(props: PromptProps) {
                       <box paddingLeft={3} flexDirection="row" gap={1}>
                         <text fg={color()} wrapMode="none">
                           {"▄".repeat(filled())}
-                          <span style={{ fg: theme.textMuted }}>{"-".repeat(width - filled())}</span>
+                          <span style={{ fg: theme.textMuted }}>{"▁".repeat(width - filled())}</span>
                         </text>
                         <text fg={theme.textMuted} wrapMode="none">
                           {label()}
