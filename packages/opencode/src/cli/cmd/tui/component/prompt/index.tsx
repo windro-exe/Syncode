@@ -343,11 +343,13 @@ export function Prompt(props: PromptProps) {
     if (tokens <= 0) return
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const percent = model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : undefined
+    const pct = percent !== undefined ? `${percent}%` : undefined
     const cost = session?.cost ?? 0
     return {
       context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
+      percent,
     }
   })
 
@@ -1743,7 +1745,32 @@ export function Prompt(props: PromptProps) {
                 </box>
               )}
             </Match>
-            <Match when={true}>{props.hint ?? <text />}</Match>
+            <Match when={true}>
+              <Switch>
+                <Match when={usage()?.percent !== undefined ? usage() : undefined}>
+                  {(item) => {
+                    const percent = () => Math.min(100, Math.max(0, item().percent ?? 0))
+                    const width = 20
+                    const filled = () => Math.round((percent() / 100) * width)
+                    const color = () => {
+                      const p = percent()
+                      if (p >= 90) return theme.error
+                      if (p >= 70) return theme.warning
+                      return theme.success
+                    }
+                    return (
+                      <box paddingLeft={3} flexDirection="row" gap={1}>
+                        <text fg={color()} wrapMode="none">
+                          {"█".repeat(filled())}
+                          <span style={{ fg: theme.textMuted }}>{"░".repeat(width - filled())}</span>
+                        </text>
+                      </box>
+                    )
+                  }}
+                </Match>
+                <Match when={true}>{props.hint ?? <text />}</Match>
+              </Switch>
+            </Match>
           </Switch>
           <Show when={status().type !== "retry"}>
             <box gap={2} flexDirection="row">
