@@ -343,13 +343,16 @@ export function Prompt(props: PromptProps) {
     if (tokens <= 0) return
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const percent = model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : undefined
+    const limit = model?.limit.context
+    const percent = limit ? Math.round((tokens / limit) * 100) : undefined
     const pct = percent !== undefined ? `${percent}%` : undefined
     const cost = session?.cost ?? 0
     return {
       context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
       percent,
+      tokens,
+      limit,
     }
   })
 
@@ -1758,11 +1761,21 @@ export function Prompt(props: PromptProps) {
                       if (p >= 70) return theme.warning
                       return theme.success
                     }
+                    const label = () => {
+                      const it = item()
+                      const cur = Locale.number(it.tokens ?? 0)
+                      const total = it.limit ? Locale.number(it.limit) : undefined
+                      const ratio = total ? `${cur}/${total}` : cur
+                      return `${ratio} (${percent()}%)`
+                    }
                     return (
                       <box paddingLeft={3} flexDirection="row" gap={1}>
                         <text fg={color()} wrapMode="none">
                           {"█".repeat(filled())}
                           <span style={{ fg: theme.textMuted }}>{"░".repeat(width - filled())}</span>
+                        </text>
+                        <text fg={theme.textMuted} wrapMode="none">
+                          {label()}
                         </text>
                       </box>
                     )
@@ -1782,10 +1795,10 @@ export function Prompt(props: PromptProps) {
               <Switch>
                 <Match when={store.mode === "normal"}>
                   <Switch>
-                    <Match when={usage()}>
+                    <Match when={usage()?.cost ? usage() : undefined}>
                       {(item) => (
                         <text fg={theme.textMuted} wrapMode="none">
-                          {[item().context, item().cost].filter(Boolean).join(" · ")}
+                          {item().cost}
                         </text>
                       )}
                     </Match>
