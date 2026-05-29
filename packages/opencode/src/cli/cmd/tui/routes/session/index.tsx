@@ -556,6 +556,68 @@ export function Session() {
       },
     },
     {
+      title: "Show context window breakdown",
+      value: "session.context",
+      category: "Session",
+      slash: {
+        name: "context",
+      },
+      run: () => {
+        prompt?.set({
+          input: "Report the current context window usage and per-category breakdown using the context tool.",
+          parts: [],
+        })
+        dialog.clear()
+      },
+    },
+    {
+      title: "List background tasks",
+      value: "session.tasks",
+      category: "Session",
+      slash: {
+        name: "tasks",
+        aliases: ["bashes"],
+      },
+      run: () => {
+        prompt?.set({
+          input: "List the background tasks running in this session using the tasks tool.",
+          parts: [],
+        })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Set an autonomous completion goal",
+      value: "session.goal",
+      category: "Session",
+      slash: {
+        name: "goal",
+      },
+      run: () => {
+        prompt?.set({
+          input:
+            "Set a completion goal with the goal tool (action=set) and then work autonomously until it is met. Goal condition: ",
+          parts: [],
+        })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Ask an ephemeral side question",
+      value: "session.btw",
+      category: "Session",
+      slash: {
+        name: "btw",
+      },
+      run: () => {
+        prompt?.set({
+          input: "btw: ",
+          parts: [],
+        })
+        dialog.clear()
+      },
+    },
+    {
       title: "Unshare session",
       value: "session.unshare",
       category: "Session",

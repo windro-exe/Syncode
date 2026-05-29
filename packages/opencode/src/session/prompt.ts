@@ -18,6 +18,7 @@ import { SystemPrompt } from "./system"
 import { SkillRouter } from "@/skill/router"
 import { SkillActive } from "@/skill/active"
 import { Goal } from "@/session/goal"
+import { Ephemeral } from "@/session/ephemeral"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
@@ -1357,6 +1358,23 @@ export const layer = Layer.effect(
                 yield* goal.clear(sessionID)
                 yield* slog.info("goal.met", { condition: activeGoal.condition })
               }
+            }
+
+            // /btw: if the just-answered turn was an ephemeral aside, prune the
+            // question and its answer so they drop from future context. They
+            // stay on disk and remain recoverable via session_recall.
+            const askedMsg = msgs.find((m) => m.info.id === lastUser.id)
+            const askedText = askedMsg?.parts.find(
+              (p): p is MessageV2.TextPart => p.type === "text" && !!p.text.trim(),
+            )?.text
+            if (askedText && Ephemeral.isEphemeralAside(askedText)) {
+              for (const m of msgs) {
+                if (m.info.id < lastUser.id) continue
+                if (m.info.pruned) continue
+                if (m.info.role !== "user" && m.info.role !== "assistant") continue
+                yield* sessions.updateMessage({ ...m.info, pruned: Date.now() })
+              }
+              yield* slog.info("btw.pruned", { messageID: lastUser.id })
             }
             yield* slog.info("exiting loop")
             break
