@@ -20,6 +20,10 @@ exports[`tool parameters JSON Schema (wire shape) bash 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "background": {
+      "description": "Run the command as a long-running background task (dev servers, watchers, tailing logs). Returns immediately with a job id and an output file path instead of waiting. The command does not time out. List or stop it with the tasks tool; read its output with the read tool.",
+      "type": "boolean",
+    },
     "command": {
       "description": "The command to execute",
       "type": "string",
