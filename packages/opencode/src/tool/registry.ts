@@ -17,6 +17,7 @@ import { SessionRecallTool } from "./session_recall"
 import { TasksTool } from "./tasks"
 import { MonitorTool } from "./monitor"
 import { ContextTool } from "./context"
+import { GoalTool } from "./goal"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -60,6 +61,7 @@ import { Reference } from "@/reference/reference"
 import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Memory } from "@/memory/memory"
+import { Goal } from "@/session/goal"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -113,6 +115,7 @@ export const layer: Layer.Layer<
   | Truncate.Service
   | RuntimeFlags.Service
   | Memory.Service
+  | Goal.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -145,6 +148,7 @@ export const layer: Layer.Layer<
     const taskstool = yield* TasksTool
     const monitortool = yield* MonitorTool
     const contexttool = yield* ContextTool
+    const goaltool = yield* GoalTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -255,6 +259,7 @@ export const layer: Layer.Layer<
           tasks: Tool.init(taskstool),
           monitor: Tool.init(monitortool),
           context: Tool.init(contexttool),
+          goal: Tool.init(goaltool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -283,6 +288,7 @@ export const layer: Layer.Layer<
             tool.tasks,
             tool.monitor,
             tool.context,
+            tool.goal,
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
@@ -394,7 +400,7 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Format.defaultLayer),
       Layer.provide(CrossSpawnSpawner.defaultLayer),
       Layer.provide(Ripgrep.defaultLayer),
-      Layer.provide(Layer.mergeAll(Truncate.defaultLayer, Memory.defaultLayer)),
+      Layer.provide(Layer.mergeAll(Truncate.defaultLayer, Memory.defaultLayer, Goal.defaultLayer)),
     )
     .pipe(Layer.provide(RuntimeFlags.defaultLayer)),
 )

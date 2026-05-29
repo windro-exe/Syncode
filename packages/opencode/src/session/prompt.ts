@@ -17,6 +17,7 @@ import { Bus } from "../bus"
 import { SystemPrompt } from "./system"
 import { SkillRouter } from "@/skill/router"
 import { SkillActive } from "@/skill/active"
+import { Goal } from "@/session/goal"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
@@ -132,6 +133,7 @@ export const layer = Layer.effect(
     const llm = yield* LLM.Service
     const router = yield* SkillRouter.Service
     const skillActive = yield* SkillActive.Service
+    const goal = yield* Goal.Service
     const references = yield* Reference.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
@@ -1292,6 +1294,70 @@ export const layer = Layer.effect(
                 callID: orphan.callID,
               })
             }
+
+            // /goal: before handing control back, if an active completion goal
+            // is not yet met, ask the small checker model and keep working
+            // instead of stopping. Bounded by max iterations; fail-safe stops.
+            const activeGoal = yield* goal.get(sessionID)
+            if (activeGoal && lastAssistantMsg) {
+              if (activeGoal.iterations >= activeGoal.max) {
+                yield* goal.clear(sessionID)
+                yield* slog.info("goal.maxIterations", { condition: activeGoal.condition })
+              } else {
+                const recent = lastAssistantMsg.parts
+                  .filter((p): p is MessageV2.TextPart => p.type === "text" && !!p.text.trim())
+                  .map((p) => p.text)
+                  .join("\n")
+                const agentInfo = yield* agents.get(lastUser.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+                const checkerModel = yield* getModel(
+                  lastUser.model.providerID,
+                  lastUser.model.modelID,
+                  sessionID,
+                ).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+                const met =
+                  agentInfo && checkerModel
+                    ? yield* goal.check({
+                        condition: activeGoal.condition,
+                        recent,
+                        agent: agentInfo,
+                        user: lastUser,
+                        fallbackModel: checkerModel,
+                        sessionID,
+                      })
+                    : true
+                if (!met) {
+                  yield* goal.increment(sessionID)
+                  const continuationID = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: continuationID,
+                    role: "user",
+                    sessionID,
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                    time: { created: Date.now() },
+                  })
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: continuationID,
+                    sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: [
+                      "<goal-continuation>",
+                      "The completion goal for this session is not yet met:",
+                      activeGoal.condition,
+                      "",
+                      `Continue working toward it. When it is fully and verifiably met, stop. (Autonomous iteration ${activeGoal.iterations}/${activeGoal.max}.)`,
+                      "</goal-continuation>",
+                    ].join("\n"),
+                  })
+                  yield* slog.info("goal.continue", { iterations: activeGoal.iterations })
+                  continue
+                }
+                yield* goal.clear(sessionID)
+                yield* slog.info("goal.met", { condition: activeGoal.condition })
+              }
+            }
             yield* slog.info("exiting loop")
             break
           }
@@ -1767,6 +1833,7 @@ export const defaultLayer = Layer.suspend(() =>
         RuntimeFlags.defaultLayer,
         SkillRouter.defaultLayer,
         SkillActive.defaultLayer,
+        Goal.defaultLayer,
       ),
     ),
   ),

@@ -1,0 +1,12 @@
+Set a completion goal for this session so you keep working autonomously until a condition is met, instead of stopping after one turn.
+
+When a goal is set, after each turn a small checker model evaluates whether the condition has been met. If not, you are automatically prompted to continue — no need for the user to nudge you each step. The goal clears automatically once met, or after a maximum number of iterations.
+
+Use this when the user asks for substantial work with a verifiable end state, e.g. "migrate this module until everything compiles and tests pass", "keep fixing lint until it's clean", "implement the feature and don't stop until the tests are green".
+
+Parameters:
+- `action`: "set" (default) starts a goal; "clear" cancels the active goal; "status" reports it.
+- `condition`: the completion condition, phrased so it can be checked objectively (required for "set"). Make it concrete and verifiable, e.g. "all tests in the auth module pass and typecheck is clean".
+- `max_iterations` (optional, default 25): a safety cap on how many extra turns the loop may run.
+
+Set a goal only for genuinely multi-step, verifiable work. Do not set one for a single quick edit or an open-ended task with no clear end state. You can clear it at any time with action "clear".

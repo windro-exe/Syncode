@@ -16,6 +16,7 @@ import { Todo } from "@/session/todo"
 import { Skill } from "@/skill"
 import { SkillActive } from "@/skill/active"
 import { Memory } from "@/memory/memory"
+import { Goal } from "@/session/goal"
 import { Agent } from "@/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Session } from "@/session/session"
@@ -54,7 +55,7 @@ const registryLayer = (opts: RegistryLayerOptions = {}) =>
       Layer.provide(opts.plugin ?? Plugin.defaultLayer),
       Layer.provide(Question.defaultLayer),
       Layer.provide(Todo.defaultLayer),
-      Layer.provide(Layer.mergeAll(Skill.defaultLayer, SkillActive.defaultLayer, Memory.defaultLayer)),
+      Layer.provide(Layer.mergeAll(Skill.defaultLayer, SkillActive.defaultLayer, Memory.defaultLayer, Goal.defaultLayer)),
       Layer.provide(Agent.defaultLayer),
       Layer.provide(Session.defaultLayer),
       Layer.provide(Layer.mergeAll(SessionStatus.defaultLayer, BackgroundJob.defaultLayer)),
