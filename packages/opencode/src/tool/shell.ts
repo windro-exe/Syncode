@@ -22,6 +22,7 @@ import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
+import { BackgroundJob } from "@/background/job"
 
 export { Parameters } from "./shell/prompt"
 
@@ -80,6 +81,18 @@ type Scan = {
 type Chunk = {
   text: string
   size: number
+}
+
+// Shared result metadata for both the foreground (run) and background
+// (runBackground) paths so the tool's execute return unifies to one shape.
+type ShellMetadata = {
+  output?: string
+  exit?: number | null
+  description: string
+  truncated?: boolean
+  outputPath?: string
+  background?: boolean
+  jobId?: string
 }
 
 export const log = Log.create({ service: "shell-tool" })
@@ -340,6 +353,7 @@ export const ShellTool = Tool.define(
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
     const flags = yield* RuntimeFlags.Service
+    const background = yield* BackgroundJob.Service
     const defaultTimeoutMs = flags.bashDefaultTimeoutMs ?? 2 * 60 * 1000
 
     const cygpath = Effect.fn("ShellTool.cygpath")(function* (shell: string, text: string) {
@@ -590,8 +604,52 @@ export const ShellTool = Tool.define(
           description: input.description,
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
-        },
+        } as ShellMetadata,
         output,
+      }
+    })
+
+    // Long-running command: stream output to a file, register a BackgroundJob,
+    // and return immediately. The job lives in the instance scope (survives the
+    // tool call); cancelling it closes the spawn scope and kills the process.
+    const runBackground = Effect.fn("ShellTool.runBackground")(function* (input: {
+      shell: string
+      command: string
+      cwd: string
+      env: NodeJS.ProcessEnv
+      description: string
+    }) {
+      const outputPath = yield* trunc.write("")
+      const job = yield* background.start({
+        type: "shell",
+        title: input.description,
+        metadata: { command: input.command, outputPath },
+        run: Effect.scoped(
+          Effect.gen(function* () {
+            const sink = createWriteStream(outputPath, { flags: "a" })
+            yield* Effect.addFinalizer(() => Effect.sync(() => sink.end()))
+            const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
+            yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) => Effect.sync(() => sink.write(chunk)))
+            const code = yield* handle.exitCode
+            return `Command exited with code ${code}`
+          }),
+        ),
+      })
+      return {
+        title: input.description,
+        metadata: {
+          background: true,
+          jobId: job.id,
+          outputPath,
+          description: input.description,
+          truncated: false,
+        } as ShellMetadata,
+        output: [
+          `Started background command (job ${job.id}).`,
+          `Output streams to: ${outputPath}`,
+          "Read that file to see progress. List or stop the job with the tasks tool.",
+          "Do not poll repeatedly; check back when you need the result.",
+        ].join("\n"),
       }
     })
 
@@ -628,6 +686,16 @@ export const ShellTool = Tool.define(
                   yield* ask(ctx, scan)
                 }),
               )
+
+              if (params.background === true) {
+                return yield* runBackground({
+                  shell,
+                  command: params.command,
+                  cwd,
+                  env: yield* shellEnv(ctx, cwd),
+                  description: params.description,
+                })
+              }
 
               return yield* run(
                 {

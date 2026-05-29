@@ -18,6 +18,7 @@ import { Plugin } from "../../src/plugin"
 import { testEffect } from "../lib/effect"
 import { Tool } from "@/tool/tool"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { BackgroundJob } from "@/background/job"
 
 const shellLayer = Layer.mergeAll(
   CrossSpawnSpawner.defaultLayer,
@@ -27,6 +28,7 @@ const shellLayer = Layer.mergeAll(
   Config.defaultLayer,
   Agent.defaultLayer,
   RuntimeFlags.defaultLayer,
+  BackgroundJob.defaultLayer,
 )
 const it = testEffect(shellLayer)
 type ShellTestServices =
@@ -182,6 +184,30 @@ describe("tool.shell", () => {
         })
         expect(result.metadata.exit).toBe(0)
         expect(result.metadata.output).toContain("test")
+      }),
+    ),
+  )
+
+  it.live("background mode returns immediately and streams output to a file", () =>
+    runIn(
+      projectRoot,
+      Effect.gen(function* () {
+        const result = yield* run({
+          command: "echo hello-bg",
+          description: "Background echo",
+          background: true,
+        })
+        expect(result.metadata.background).toBe(true)
+        expect(typeof result.metadata.jobId).toBe("string")
+        const outputPath = result.metadata.outputPath as string
+        expect(outputPath).toBeTruthy()
+
+        const jobs = yield* BackgroundJob.Service
+        const waited = yield* jobs.wait({ id: result.metadata.jobId as string, timeout: 15_000 })
+        expect(waited.info?.status).toBe("completed")
+
+        const content = yield* Effect.promise(() => Bun.file(outputPath).text())
+        expect(content).toContain("hello-bg")
       }),
     ),
   )

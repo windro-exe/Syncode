@@ -1,0 +1,14 @@
+List and manage background tasks running in this session — background shell commands, monitors, and background subagents.
+
+Use this to:
+- See what is still running before you start overlapping work or decide you are done.
+- Check the status of a background job you started earlier.
+- Stop a background job that is no longer needed.
+
+Parameters:
+- `action` (optional): "list" (default) shows every background job and its status; "stop" cancels one.
+- `id` (optional, required for "stop"): the job id to cancel.
+
+Status values: running, completed, error, cancelled. For a completed job, prefer reading its output file (background shell writes one) rather than expecting full output here.
+
+This is the same registry that background subagents, background shell commands (`background: true`), and the monitor tool report into.

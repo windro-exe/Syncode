@@ -14,6 +14,7 @@ import { InvalidTool } from "./invalid"
 import { SkillSectionTool } from "./skill_section"
 import { MemoryTool } from "./memory"
 import { SessionRecallTool } from "./session_recall"
+import { TasksTool } from "./tasks"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -139,6 +140,7 @@ export const layer: Layer.Layer<
     const skilltool = yield* SkillSectionTool
     const memorytool = yield* MemoryTool
     const recalltool = yield* SessionRecallTool
+    const taskstool = yield* TasksTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -246,6 +248,7 @@ export const layer: Layer.Layer<
           skill_section: Tool.init(skilltool),
           memory: Tool.init(memorytool),
           session_recall: Tool.init(recalltool),
+          tasks: Tool.init(taskstool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -271,6 +274,7 @@ export const layer: Layer.Layer<
             tool.skill_section,
             tool.memory,
             tool.session_recall,
+            tool.tasks,
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
