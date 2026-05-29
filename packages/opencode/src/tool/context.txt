@@ -1,0 +1,14 @@
+Show where the context window is being spent right now: how full it is, the real token usage of the last request, and an estimated per-category breakdown.
+
+Use this when:
+- You want to know how much context budget is left before older turns get evicted.
+- The user asks about context usage, token usage, or why the window is filling up.
+- You are deciding whether to persist state to memory or wrap up a long session.
+
+Takes no parameters. Reports:
+- Window usage (used / limit) and the usable budget.
+- The 60% soft-checkpoint and 80% eviction thresholds and whether you have crossed them.
+- The last request's real token counts (uncached input, cached read/write, output) and the cache hit rate.
+- An estimated split of the conversation: visible text vs tool output, system+tools overhead, and how many turns have been evicted (recoverable with session_recall).
+
+Estimates use a character heuristic and will not match the provider's exact tokenizer, but the window-usage and last-request numbers are the provider's real figures.

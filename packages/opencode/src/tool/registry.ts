@@ -16,6 +16,7 @@ import { MemoryTool } from "./memory"
 import { SessionRecallTool } from "./session_recall"
 import { TasksTool } from "./tasks"
 import { MonitorTool } from "./monitor"
+import { ContextTool } from "./context"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -143,6 +144,7 @@ export const layer: Layer.Layer<
     const recalltool = yield* SessionRecallTool
     const taskstool = yield* TasksTool
     const monitortool = yield* MonitorTool
+    const contexttool = yield* ContextTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -252,6 +254,7 @@ export const layer: Layer.Layer<
           session_recall: Tool.init(recalltool),
           tasks: Tool.init(taskstool),
           monitor: Tool.init(monitortool),
+          context: Tool.init(contexttool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -279,6 +282,7 @@ export const layer: Layer.Layer<
             tool.session_recall,
             tool.tasks,
             tool.monitor,
+            tool.context,
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
