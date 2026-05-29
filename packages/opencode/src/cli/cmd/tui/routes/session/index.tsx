@@ -49,7 +49,7 @@ import type { WebFetchTool } from "@/tool/webfetch"
 import { webSearchProviderLabel, type WebSearchTool } from "@/tool/websearch"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
-import type { SkillTool } from "@/tool/skill"
+import type { SkillSectionTool } from "@/tool/skill_section"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useEditorContext } from "@tui/context/editor"
@@ -1683,7 +1683,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "question"}>
           <Question {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "skill"}>
+        <Match when={props.part.tool === "skill_section"}>
           <Skill {...toolprops} />
         </Match>
         <Match when={true}>
@@ -2307,10 +2307,16 @@ function Question(props: ToolProps<typeof QuestionTool>) {
   )
 }
 
-function Skill(props: ToolProps<typeof SkillTool>) {
+function Skill(props: ToolProps<typeof SkillSectionTool>) {
+  const sections = () => props.input.sections ?? []
   return (
-    <InlineTool icon="→" pending="Loading skill..." complete={props.input.name} part={props.part}>
-      Skill "{props.input.name}"
+    <InlineTool
+      icon="→"
+      pending="Loading skill section..."
+      complete={sections().join(", ") || "(none)"}
+      part={props.part}
+    >
+      Skill section{sections().length > 1 ? "s" : ""}: {sections().join(", ") || "(none)"}
     </InlineTool>
   )
 }

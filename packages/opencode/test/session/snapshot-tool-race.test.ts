@@ -44,6 +44,9 @@ import { Env } from "../../src/env"
 import { Question } from "../../src/question"
 import { Image } from "../../src/image/image"
 import { Skill } from "../../src/skill"
+import { SkillActive } from "../../src/skill/active"
+import { SkillRouter } from "../../src/skill/router"
+import { Memory } from "../../src/memory/memory"
 import { SystemPrompt } from "../../src/session/system"
 import { Todo } from "../../src/session/todo"
 import { SessionCompaction } from "../../src/session/compaction"
@@ -132,6 +135,9 @@ function makeHttp() {
     status,
     SyncEvent.defaultLayer,
     EventV2Bridge.defaultLayer,
+    SkillActive.defaultLayer,
+    Memory.defaultLayer,
+    SkillRouter.defaultLayer,
   ).pipe(Layer.provideMerge(infra))
   const question = Question.layer.pipe(Layer.provideMerge(deps))
   const todo = Todo.layer.pipe(Layer.provideMerge(deps))

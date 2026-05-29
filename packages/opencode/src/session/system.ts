@@ -16,8 +16,9 @@ import type { Agent } from "@/agent/agent"
 import type { SessionID } from "./schema"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
+import { SkillActive } from "@/skill/active"
 import { Memory } from "@/memory/memory"
-import { ensureGlobalSeeds } from "@/memory/bootstrap"
+import { ensureGlobalSeeds, ensureSessionSeeds } from "@/memory/bootstrap"
 
 export function provider(model: Provider.Model) {
   if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
@@ -37,16 +38,25 @@ export function provider(model: Provider.Model) {
 
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
-  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+  readonly skills: (agent: Agent.Info, sessionID: SessionID) => Effect.Effect<string | undefined>
   readonly memory: (sessionID: SessionID) => Effect.Effect<string | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
 
+// Escape values interpolated into XML-ish attributes the model parses.
+// Strips the structural characters rather than HTML-encoding them — the
+// model doesn't unescape entities, and we only ever interpolate short
+// identifiers (skill names, section ids).
+function xmlAttr(value: string): string {
+  return value.replace(/[<>"]/g, "")
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const skill = yield* Skill.Service
+    const skillActive = yield* SkillActive.Service
     const memorySvc = yield* Memory.Service
 
     return Service.of({
@@ -67,22 +77,47 @@ export const layer = Layer.effect(
         ]
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
+      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, sessionID: SessionID) {
         if (Permission.disabled(["skill"], agent.permission).has("skill")) return
 
-        const list = yield* skill.available(agent)
+        const names = yield* skillActive.get(sessionID)
+        if (names.length === 0) return
 
-        return [
-          "Skills provide specialized instructions and workflows for specific tasks.",
-          "Use the skill tool to load a skill when a task matches its description.",
-          // the agents seem to ingest the information about skills a bit better if we present a more verbose
-          // version of them here and a less verbose version in tool description, rather than vice versa.
-          Skill.fmt(list, { verbose: true }),
-        ].join("\n")
+        const blocks: string[] = []
+        for (const name of names) {
+          const info = yield* skill.get(name)
+          if (!info) continue
+
+          const rulesBlock =
+            info.rules.length > 0
+              ? ["<rules>", ...info.rules.map((r) => `  - ${r}`), "</rules>"].join("\n")
+              : null
+          const tocBlock = [
+            "<table_of_contents>",
+            ...info.sections.map((s) => `  - ${s.id}${s.title ? `: ${s.title}` : ""}`),
+            "</table_of_contents>",
+          ].join("\n")
+
+          blocks.push(
+            [
+              `<active_skill name="${xmlAttr(info.name)}">`,
+              info.description ? info.description : null,
+              rulesBlock,
+              tocBlock,
+              `Use the \`skill_section\` tool with section ids from this skill's table of contents to fetch the bodies you actually need. Pass \`skill: "${xmlAttr(info.name)}"\` to disambiguate when multiple skills are active.`,
+              "</active_skill>",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          )
+        }
+        if (blocks.length === 0) return
+        return blocks.join("\n\n")
       }),
 
       memory: Effect.fn("SystemPrompt.memory")(function* (sessionID: SessionID) {
         yield* ensureGlobalSeeds(memorySvc).pipe(Effect.ignore)
+        yield* ensureSessionSeeds(memorySvc, sessionID).pipe(Effect.ignore)
         const idx = yield* memorySvc.index({ ctx: { sessionID } })
         const fmt = (label: string, list: typeof idx.global) => {
           if (list.length === 0) return `  ${label}: (empty)`
@@ -117,17 +152,45 @@ export const layer = Layer.effect(
           ].join("\n")
         })()
 
+        const sessionPlanEntry = yield* memorySvc
+          .view({ scope: "session", path: "/memories/_plan.md", ctx: { sessionID } })
+          .pipe(Effect.orElseSucceed(() => undefined))
+        const sessionBlock = (() => {
+          if (!sessionPlanEntry || !sessionPlanEntry.entry) return null
+          const content = sessionPlanEntry.entry.content
+          const unfilled = /_unset_/.test(content)
+          if (unfilled) {
+            return [
+              "<session-state status=\"unfilled\">",
+              "The /memories/_plan.md file (scope=session) is your scratchpad for THIS conversation only. As the task takes shape, fill the sections below using `memory` tool with command=str_replace to overwrite each `_unset_` marker, and keep them current with command=str_replace as decisions evolve. This lets a future turn (after context overflow or compaction) resume from a clean snapshot. Don't put durable user-level facts here — those go to global scope.",
+              content,
+              "</session-state>",
+            ].join("\n")
+          }
+          return [
+            "<session-state status=\"filled\">",
+            content,
+            "</session-state>",
+          ].join("\n")
+        })()
+
         return [
           "<memory>",
-          "You have a persistent memory tool. ALWAYS check memory before starting a task and save durable facts as you learn them.",
-          "Two scopes:",
-          "  - global: persists across every session (user prefs, system info, conventions, lessons)",
-          "  - session: only this conversation (current plan, in-flight thoughts)",
-          "Use `memory` tool with command=view to read entries, command=create/str_replace/insert to update, command=search to query.",
+          "You have a persistent memory tool. Check it at the start of a task and write to it as you learn things.",
+          "",
+          "Two scopes — pick by the lifetime of the fact:",
+          "  - global: persists across every future conversation. Use for the user's name and prefs, system info, durable conventions, learned lessons about the codebase, decisions about how the user works.",
+          "  - session: only this conversation. Use for the current task's goal, the plan, decisions made this turn, files in flight, in-progress steps, open questions, things tried that didn't work.",
+          "",
+          "Routing test: \"Would I want this in an unrelated conversation two weeks from now?\" yes → global, no → session. When in doubt, prefer session — global is for facts that earn their permanence.",
+          "",
+          "Use `memory` tool: command=view (read), command=search (full-text query), command=create / str_replace / insert (write), command=delete / rename (manage). Memory persists across context resets — treat your active conversation as ephemeral, treat memory as durable.",
+          "",
           "Index of what is already in memory:",
           fmt("global", idx.global),
           fmt("session", idx.session),
           ...(agentBlock ? ["", agentBlock] : []),
+          ...(sessionBlock ? ["", sessionBlock] : []),
           "</memory>",
         ].join("\n")
       }),
@@ -135,6 +198,10 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer), Layer.provide(Memory.defaultLayer))
+export const defaultLayer = layer.pipe(
+  Layer.provide(Skill.defaultLayer),
+  Layer.provide(SkillActive.defaultLayer),
+  Layer.provide(Memory.defaultLayer),
+)
 
 export * as SystemPrompt from "./system"

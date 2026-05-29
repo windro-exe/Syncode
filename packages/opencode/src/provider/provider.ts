@@ -1635,6 +1635,18 @@ export const layer = Layer.effect(
             }
           }
 
+          // Debug: dump the exact body sent on the wire to a file when
+          // OPENCODE_DEBUG_HTTP_BODY is set. One file per request, named
+          // by provider+timestamp under <datadir>/tmp/http-debug.
+          if (process.env.OPENCODE_DEBUG_HTTP_BODY && opts.method === "POST" && opts.body) {
+            try {
+              const dbgDir = `${process.env.OPENCODE_DEBUG_HTTP_BODY}`.trim()
+              const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+              const file = `${dbgDir.replace(/[\\/]+$/, "")}/${stamp}-${model.providerID}-${model.api.id}.json`
+              await Bun.write(file, String(opts.body))
+            } catch {}
+          }
+
           const res = await fetchFn(input, {
             ...opts,
             // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682

@@ -1,13 +1,24 @@
 - Fetches content from a specified URL
-- Takes a URL and optional format as input
-- Fetches the URL content, converts to requested format (markdown by default)
-- Returns the content in the specified format
-- Use this tool when you need to retrieve and analyze web content
+- Converts HTML to the requested format (markdown by default)
+- Use to retrieve and analyze a specific web page
 
-Usage notes:
-  - IMPORTANT: if another tool is present that offers better web fetching capabilities, is more targeted to the task, or has fewer restrictions, prefer using that tool instead of this one.
-  - The URL must be a fully-formed valid URL
-  - HTTP URLs will be automatically upgraded to HTTPS
-  - Format options: "markdown" (default), "text", or "html"
-  - This tool is read-only and does not modify any files
-  - Results may be summarized if the content is very large
+Parameters:
+  - url: required, must start with http:// or https://
+  - format: "markdown" (default), "text", or "html"
+  - timeout: optional seconds, max 120
+  - objective: optional natural-language goal — when set, only sections matching the objective are returned (lexical scoring on markdown headings/paragraphs). Use for long pages where you need a specific answer, not the whole document. Markdown format only.
+  - maxChars: optional output cap (default 50000, hard max 100000). Lower values force tighter focus when an objective is set.
+
+When to use objective:
+  - Page is long (docs, papers, wiki) and you only need one topic from it
+  - You're comparing several sources and want each fetch focused on the same question
+  - Skip objective when: short page, you need verbatim content (e.g. a config file, a code sample), or you want to skim freely
+
+When to prefer websearch with deep=true instead:
+  - You don't have specific URLs yet and need to discover then fetch in one shot
+  - You'd otherwise webfetch 3+ pages from the same search
+
+Notes:
+  - HTTP URLs auto-upgrade to HTTPS via the server's redirect; we don't rewrite
+  - Read-only — no side effects on local files
+  - Cloudflare-blocked pages get one retry with an honest UA

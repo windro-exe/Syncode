@@ -11,8 +11,9 @@ import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
-import { SkillTool } from "./skill"
+import { SkillSectionTool } from "./skill_section"
 import { MemoryTool } from "./memory"
+import { SessionRecallTool } from "./session_recall"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -50,6 +51,7 @@ import { Bus } from "../bus"
 import { Agent } from "../agent/agent"
 import { Git } from "@/git"
 import { Skill } from "../skill"
+import { SkillActive } from "../skill/active"
 import { Permission } from "@/permission"
 import { Reference } from "@/reference/reference"
 import { BackgroundJob } from "@/background/job"
@@ -90,6 +92,7 @@ export const layer: Layer.Layer<
   | Todo.Service
   | Agent.Service
   | Skill.Service
+  | SkillActive.Service
   | Session.Service
   | BackgroundJob.Service
   | Provider.Service
@@ -113,7 +116,6 @@ export const layer: Layer.Layer<
     const config = yield* Config.Service
     const plugin = yield* Plugin.Service
     const agents = yield* Agent.Service
-    const skill = yield* Skill.Service
     const truncate = yield* Truncate.Service
     const flags = yield* RuntimeFlags.Service
 
@@ -134,8 +136,9 @@ export const layer: Layer.Layer<
     const edit = yield* EditTool
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
-    const skilltool = yield* SkillTool
+    const skilltool = yield* SkillSectionTool
     const memorytool = yield* MemoryTool
+    const recalltool = yield* SessionRecallTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -240,8 +243,9 @@ export const layer: Layer.Layer<
           search: Tool.init(websearch),
           repo_clone: Tool.init(repoClone),
           repo_overview: Tool.init(repoOverview),
-          skill: Tool.init(skilltool),
+          skill_section: Tool.init(skilltool),
           memory: Tool.init(memorytool),
+          session_recall: Tool.init(recalltool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -264,8 +268,9 @@ export const layer: Layer.Layer<
             tool.todo,
             tool.search,
             ...(flags.experimentalScout ? [tool.repo_clone, tool.repo_overview] : []),
-            tool.skill,
+            tool.skill_section,
             tool.memory,
+            tool.session_recall,
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
@@ -283,25 +288,6 @@ export const layer: Layer.Layer<
 
     const ids: Interface["ids"] = Effect.fn("ToolRegistry.ids")(function* () {
       return (yield* all()).map((tool) => tool.id)
-    })
-
-    const describeSkill = Effect.fn("ToolRegistry.describeSkill")(function* (agent: Agent.Info) {
-      const list = yield* skill.available(agent)
-      if (list.length === 0) return "No skills are currently available."
-      return [
-        "Load a specialized skill that provides domain-specific instructions and workflows.",
-        "",
-        "When you recognize that a task matches one of the available skills listed below, use this tool to load the full skill instructions.",
-        "",
-        "The skill will inject detailed instructions, workflows, and access to bundled resources (scripts, references, templates) into the conversation context.",
-        "",
-        'Tool output includes a `<skill_content name="...">` block with the loaded content.',
-        "",
-        "The following skills provide specialized sets of instructions for particular tasks",
-        "Invoke this tool to load a skill when a task matches one of the available skills listed below:",
-        "",
-        Skill.fmt(list, { verbose: false }),
-      ].join("\n")
     })
 
     const describeTask = Effect.fn("ToolRegistry.describeTask")(function* (agent: Agent.Info) {
@@ -352,7 +338,6 @@ export const layer: Layer.Layer<
             description: [
               output.description,
               tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,
-              tool.id === SkillTool.id ? yield* describeSkill(input.agent) : undefined,
             ]
               .filter(Boolean)
               .join("\n"),
@@ -382,7 +367,7 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Plugin.defaultLayer),
       Layer.provide(Question.defaultLayer),
       Layer.provide(Todo.defaultLayer),
-      Layer.provide(Skill.defaultLayer),
+      Layer.provide(Layer.mergeAll(Skill.defaultLayer, SkillActive.defaultLayer)),
       Layer.provide(Agent.defaultLayer),
       Layer.provide(Session.defaultLayer),
       Layer.provide(BackgroundJob.defaultLayer),

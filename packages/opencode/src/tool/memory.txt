@@ -1,8 +1,10 @@
 Persistent memory across sessions and within a session.
 
-Two scopes:
-- `global` — survives across every session. Use for the user's name, system info, durable preferences, learned conventions, lessons.
-- `session` — only this session. Use for the current task plan, in-flight thoughts, transient notes you want to revisit a few turns later.
+Two scopes — pick by the lifetime of the fact:
+- `global` — persists across every future conversation. Use for: the user's name, system info, durable preferences, learned conventions, codebase facts that won't change tomorrow, lessons, decisions about how the user works.
+- `session` — only this conversation. Use for: the current task's goal, the plan, decisions made this turn, files in flight, in-progress steps, open questions, things tried that didn't work.
+
+Routing test: "Would I want this in an unrelated conversation two weeks from now?" yes → `global`, no → `session`. When in doubt, prefer `session` — `global` is for facts that earn their permanence.
 
 Operations:
 - `view` — list a directory or read a file (use `path: "/memories"` to list everything; pass a `view_range: [start, end]` for slices)
@@ -15,8 +17,9 @@ Operations:
 
 Memory protocol:
 - ALWAYS call `view` on `/memories` (in both scopes) at the start of a task to see what is known.
-- Save things you would want a future session to remember (durable preferences, system facts, lessons, conventions) to `global`.
-- Save in-flight task state (the plan, decisions you just made, files you are working on) to `session`.
+- Each session is auto-seeded with `/memories/_plan.md` (scope=session). Fill in its sections (Goal, Plan, Decisions, In-progress, Open questions, Tried) using `str_replace` as the task takes shape, and keep them current as you go. This is your scratchpad for resuming after context overflow.
+- Save things you would want a FUTURE session to remember to `global`.
+- Save in-flight task state for THIS session to `session`.
 - Keep entries concise and well-titled. Update existing entries with `str_replace`/`insert` rather than creating duplicates.
 - Delete or rename stale entries when the user contradicts them.
 - Memory persists across context resets. Treat your active context as ephemeral; treat memory as durable.
@@ -27,6 +30,7 @@ Path rules:
 
 Examples:
   view {scope: "global", path: "/memories"}
+  view {scope: "session", path: "/memories/_plan.md"}
   create {scope: "global", path: "/memories/preferences.md", content: "..."}
-  str_replace {scope: "global", path: "/memories/preferences.md", old_str: "...", new_str: "..."}
+  str_replace {scope: "session", path: "/memories/_plan.md", old_str: "## Goal\n_unset_", new_str: "## Goal\nAdd dark-mode toggle to settings page."}
   search {query: "shell preferences", scope: "global"}

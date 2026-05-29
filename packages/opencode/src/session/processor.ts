@@ -576,6 +576,20 @@ export const layer = Layer.effect(
             ctx.assistantMessage.finish = value.reason
             ctx.assistantMessage.cost += usage.cost
             ctx.assistantMessage.tokens = usage.tokens
+            // Cache-hit observability: the fraction of prompt tokens served from
+            // the provider cache. A low ratio means the cached prefix is being
+            // invalidated (e.g. by mid-conversation eviction) and re-billed at
+            // full price — the canary for prompt-cache churn.
+            const cachedInput = usage.tokens.input + usage.tokens.cache.read + usage.tokens.cache.write
+            if (cachedInput > 0)
+              slog.info("usage.cache", {
+                messageID: ctx.assistantMessage.id,
+                input: usage.tokens.input,
+                cacheRead: usage.tokens.cache.read,
+                cacheWrite: usage.tokens.cache.write,
+                output: usage.tokens.output,
+                cacheHitRate: Number((usage.tokens.cache.read / cachedInput).toFixed(3)),
+              })
             yield* session.updatePart({
               id: PartID.ascending(),
               reason: value.reason,

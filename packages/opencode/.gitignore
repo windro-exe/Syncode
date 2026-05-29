@@ -6,3 +6,7 @@ app.log
 script/build-*.ts
 temporary-*.md
 .artifacts
+# Local persistent-memory + session SQLite store (machine-local, never commit)
+opencode.db
+opencode.db-shm
+opencode.db-wal

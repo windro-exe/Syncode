@@ -27,7 +27,7 @@ import type { LspTool } from "@/tool/lsp"
 import type { PlanExitTool } from "@/tool/plan"
 import type { QuestionTool } from "@/tool/question"
 import type { ReadTool } from "@/tool/read"
-import type { SkillTool } from "@/tool/skill"
+import type { SkillSectionTool } from "@/tool/skill_section"
 import type { TaskTool } from "@/tool/task"
 import type { TodoWriteTool } from "@/tool/todo"
 import type { WebFetchTool } from "@/tool/webfetch"
@@ -108,7 +108,7 @@ type ToolDefs = {
   lsp: typeof LspTool
   webfetch: typeof WebFetchTool
   websearch: typeof WebSearchTool
-  skill: typeof SkillTool
+  skill_section: typeof SkillSectionTool
   plan_exit: typeof PlanExitTool
 }
 
@@ -393,10 +393,11 @@ function runTodo(p: ToolProps<typeof TodoWriteTool>): ToolInline {
   }
 }
 
-function runSkill(p: ToolProps<typeof SkillTool>): ToolInline {
+function runSkill(p: ToolProps<typeof SkillSectionTool>): ToolInline {
+  const sections = p.input.sections ?? []
   return {
     icon: "→",
-    title: `Skill "${p.input.name ?? ""}"`,
+    title: `Skill section${sections.length > 1 ? "s" : ""}: ${sections.join(", ") || "(none)"}`,
   }
 }
 
@@ -861,8 +862,9 @@ function scrollLspStart(p: ToolProps<typeof LspTool>): string {
   return `→ ${lspTitle(p.input)}`
 }
 
-function scrollSkillStart(p: ToolProps<typeof SkillTool>): string {
-  return `→ Skill "${p.input.name ?? ""}"`
+function scrollSkillStart(p: ToolProps<typeof SkillSectionTool>): string {
+  const sections = p.input.sections ?? []
+  return `→ Skill section${sections.length > 1 ? "s" : ""}: ${sections.join(", ") || "(none)"}`
 }
 
 function scrollGlobStart(p: ToolProps<typeof GlobTool>): string {
@@ -1212,7 +1214,7 @@ const TOOL_RULES = {
     },
     permission: permWebSearch,
   },
-  skill: {
+  skill_section: {
     view: {
       output: false,
       final: false,

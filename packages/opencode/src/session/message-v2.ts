@@ -330,6 +330,7 @@ export const User = Schema.Struct({
   time: Schema.Struct({
     created: NonNegativeInt,
   }),
+  pruned: Schema.optional(NonNegativeInt),
   format: Schema.optional(Format),
   summary: Schema.optional(
     Schema.Struct({
@@ -456,6 +457,7 @@ export const Assistant = Schema.Struct({
     created: NonNegativeInt,
     completed: Schema.optional(NonNegativeInt),
   }),
+  pruned: Schema.optional(NonNegativeInt),
   error: Schema.optional(AssistantErrorSchema),
   parentID: MessageID,
   modelID: ModelID,
@@ -470,6 +472,7 @@ export const Assistant = Schema.Struct({
     root: Schema.String,
   }),
   summary: Schema.optional(Schema.Boolean),
+  skill: Schema.optional(Schema.String),
   cost: Schema.Finite,
   tokens: Schema.Struct({
     total: Schema.optional(Schema.Finite),
@@ -690,7 +693,35 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     return { type: "json", value: output as never }
   }
 
+  let lastPrunedRole: "user" | "assistant" | undefined
   for (const msg of input) {
+    if (msg.info.pruned) {
+      // Sliding-window eviction: parts persist on disk but we send a
+      // placeholder so the prompt fits. Two precautions:
+      //  1) emit BEFORE the empty-parts skip below — a pruned message with
+      //     zero parts must still produce a placeholder, otherwise we'd
+      //     silently drop a slot and break user/assistant alternation
+      //     downstream.
+      //  2) dedupe consecutive same-role pruned messages — opencode runs
+      //     each tool step as its own assistant Info, so a pruned turn
+      //     commonly looks like [user, assistant, assistant, assistant].
+      //     The AI SDK's `convertToModelMessages` does NOT merge same-role
+      //     UIMessages, and Anthropic rejects same-role runs with 400.
+      if (lastPrunedRole === msg.info.role) continue
+      lastPrunedRole = msg.info.role
+      result.push({
+        id: msg.info.id,
+        role: msg.info.role,
+        parts: [
+          {
+            type: "text",
+            text: "[older context evicted to fit window]",
+          },
+        ],
+      })
+      continue
+    }
+    lastPrunedRole = undefined
     if (msg.parts.length === 0) continue
 
     if (msg.info.role === "user") {
@@ -1139,6 +1170,29 @@ export function fromError(
           metadata: {
             code: (e as FetchDecompressionError).code,
             message: e.message,
+          },
+        },
+        { cause: e },
+      ).toObject()
+    // A mid-stream socket teardown (undici UND_ERR_ABORTED, surfaced by the AI
+    // SDK as an APICallError whose message is "aborted") is a transient network
+    // failure — morally identical to the ECONNRESET case above, not a user
+    // cancellation. A genuine user abort arrives as a DOMException AbortError
+    // (handled at the top) and sets ctx.aborted. Mark the network case retryable
+    // so the turn reconnects instead of halting with a bare `api_error: aborted`.
+    case (e as SystemError)?.code === "UND_ERR_ABORTED" ||
+      (APICallError.isInstance(e) &&
+        (e.message === "aborted" || (e.cause as SystemError | undefined)?.code === "UND_ERR_ABORTED")):
+      if (ctx.aborted) {
+        return new AbortedError({ message: errorMessage(e) }, { cause: e }).toObject()
+      }
+      return new APIError(
+        {
+          message: "Connection aborted by server",
+          isRetryable: true,
+          metadata: {
+            code: "UND_ERR_ABORTED",
+            message: errorMessage(e),
           },
         },
         { cause: e },

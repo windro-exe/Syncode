@@ -356,6 +356,18 @@ export function Prompt(props: PromptProps) {
     }
   })
 
+  const activeSkill = createMemo(() => {
+    if (!props.sessionID) return undefined
+    // Only show the skill while a turn is actively running. Otherwise the
+    // last assistant message's skill leaks into idle state and into the
+    // start of the next user turn until the new router pick lands.
+    if (status().type === "idle") return undefined
+    const msg = sync.data.message[props.sessionID] ?? []
+    const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant")
+    const name = last?.skill?.trim()
+    return name && name.length > 0 ? name : undefined
+  })
+
   const [store, setStore] = createStore<{
     prompt: PromptInfo
     mode: "normal" | "shell"
@@ -1777,11 +1789,31 @@ export function Prompt(props: PromptProps) {
                         <text fg={theme.textMuted} wrapMode="none">
                           {label()}
                         </text>
+                        <Show when={activeSkill()}>
+                          {(name) => (
+                            <text fg={theme.secondary} wrapMode="none">
+                              → {name()}
+                            </text>
+                          )}
+                        </Show>
                       </box>
                     )
                   }}
                 </Match>
-                <Match when={true}>{props.hint ?? <text />}</Match>
+                <Match when={true}>
+                  <Show
+                    when={activeSkill()}
+                    fallback={props.hint ?? <text />}
+                  >
+                    {(name) => (
+                      <box paddingLeft={3} flexDirection="row" gap={1}>
+                        <text fg={theme.secondary} wrapMode="none">
+                          → {name()}
+                        </text>
+                      </box>
+                    )}
+                  </Show>
+                </Match>
               </Switch>
             </Match>
           </Switch>

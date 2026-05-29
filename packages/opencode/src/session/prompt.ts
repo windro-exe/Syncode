@@ -11,8 +11,12 @@ import { ModelID, ProviderID } from "../provider/schema"
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import { SessionCompaction } from "./compaction"
+import { usable as usableContext, isSoftCheckpoint } from "./overflow"
+import { Token } from "@/util/token"
 import { Bus } from "../bus"
 import { SystemPrompt } from "./system"
+import { SkillRouter } from "@/skill/router"
+import { SkillActive } from "@/skill/active"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
@@ -126,6 +130,8 @@ export const layer = Layer.effect(
     const summary = yield* SessionSummary.Service
     const sys = yield* SystemPrompt.Service
     const llm = yield* LLM.Service
+    const router = yield* SkillRouter.Service
+    const skillActive = yield* SkillActive.Service
     const references = yield* Reference.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
@@ -1313,14 +1319,57 @@ export const layer = Layer.effect(
             break
           }
 
-          if (
-            lastFinished &&
-            lastFinished.summary !== true &&
-            (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
-          ) {
-            // Memory-system replacement for compaction: clear stale tool outputs in-place
-            // (no summarization, no model call) and let the next turn proceed.
-            yield* slog.info("overflow", { sessionID, reason: "context_overflow_pre_request" })
+          let softCheckpoint = false
+          if (lastFinished && lastFinished.summary !== true) {
+            const cfg = yield* config.get()
+            const usable = usableContext({ cfg, model, outputTokenMax: flags.outputTokenMax })
+            const lastTokens =
+              lastFinished.tokens.total ||
+              lastFinished.tokens.input +
+                lastFinished.tokens.output +
+                lastFinished.tokens.cache.read +
+                lastFinished.tokens.cache.write
+            // Approximate the size of the new user message (the one the
+            // user just sent that triggered this loop). lastFinished.tokens
+            // is from the PREVIOUS assistant — it doesn't see the new user
+            // message yet, so a fresh 200K paste would slip past an
+            // lastTokens-only check.
+            const newUserMsg = msgs.findLast((m) => m.info.role === "user" && m.info.id > lastFinished.id)
+            const newUserApprox = newUserMsg ? Token.estimate(JSON.stringify(newUserMsg.parts)) : 0
+            const projected = lastTokens + newUserApprox
+            // Soft checkpoint: at ~60% fill, ahead of the 80% eviction below,
+            // flag this turn so we can nudge the model to persist durable state
+            // to memory before older turns become unrecoverable.
+            softCheckpoint = isSoftCheckpoint({ cfg, projected, model, outputTokenMax: flags.outputTokenMax })
+            // Pre-emptive sliding-window prune: when projected size exceeds
+            // 80% of usable context, evict whole turns synchronously before
+            // the next request fires. keepTokens leaves room for the new
+            // user message so kept tail + new user ≤ ~60% of usable.
+            if (usable > 0 && projected >= usable * SessionCompaction.PRUNE_TURN_TRIGGER_FRACTION) {
+              const keepBudget = Math.max(
+                Math.floor(usable * 0.3),
+                Math.floor(usable * SessionCompaction.PRUNE_TURN_KEEP_FRACTION) - newUserApprox,
+              )
+              yield* slog.info("overflow.prune", {
+                sessionID,
+                lastTokens,
+                newUserApprox,
+                projected,
+                usable,
+                keepBudget,
+              })
+              yield* compaction
+                .prune({
+                  sessionID,
+                  model,
+                  keepTokens: keepBudget,
+                })
+                .pipe(Effect.ignore)
+              // Prune mutates message.info.pruned in storage; reload the local
+              // snapshot so the request built below sees evicted-turn
+              // placeholders instead of full content.
+              msgs = yield* MessageV2.filterCompactedEffect(sessionID)
+            }
           }
 
           const agent = yield* agents.get(lastUser.agent)
@@ -1407,6 +1456,26 @@ export const layer = Layer.effect(
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
 
+            // Soft checkpoint: once per user turn, when context is already ~60%
+            // full, remind the model to persist durable state to memory before
+            // the 80% eviction drops older turns. Appended to the user's own
+            // text part so it rides the same message (no extra cache breakpoint).
+            if (step === 1 && softCheckpoint) {
+              const target = lastUserMsg?.parts.findLast(
+                (p) => p.type === "text" && !p.ignored && !p.synthetic && p.text.trim().length > 0,
+              )
+              if (target?.type === "text") {
+                target.text = [
+                  target.text,
+                  "",
+                  "<system-reminder>",
+                  "The context window is about 60% full. Older turns will soon be evicted to make room, and evicted content is only recoverable via the session_recall tool.",
+                  "Before continuing, save any durable facts you will need later — decisions, file paths, error strings, open questions, task state — to memory (the memory tool, session scope). This is the moment to do it; do not wait until context overflows.",
+                  "</system-reminder>",
+                ].join("\n")
+              }
+            }
+
             if (step > 1 && lastFinished) {
               for (const m of msgs) {
                 if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
@@ -1427,8 +1496,37 @@ export const layer = Layer.effect(
 
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
+            // Auto-skill router: runs once per user turn (step 1), then the
+            // pick is held in SkillActive for every follow-up step. Re-routing
+            // on every step would 6× the cost on tool-heavy turns and let the
+            // decision flip mid-turn.
+            if (step === 1) {
+              const userText = (() => {
+                const parts = lastUserMsg?.parts ?? []
+                const texts = parts
+                  .filter((p): p is MessageV2.TextPart => p.type === "text" && !("synthetic" in p && p.synthetic))
+                  .map((p) => p.text)
+                  .filter((t) => t && t.trim().length > 0)
+                return texts.join("\n").trim().slice(0, 4000)
+              })()
+              const picked = yield* router
+                .route({
+                  agent,
+                  user: lastUser,
+                  userText,
+                  fallbackModel: model,
+                  sessionID,
+                })
+                .pipe(Effect.catchCause(() => Effect.succeed([] as string[])))
+              yield* skillActive.set(sessionID, picked)
+              if (picked.length > 0) {
+                handle.message.skill = picked.join(",")
+                yield* sessions.updateMessage(handle.message)
+              }
+            }
+
             const [skills, env, instructions, modelMsgs, memory] = yield* Effect.all([
-              sys.skills(agent),
+              sys.skills(agent, sessionID),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
@@ -1667,6 +1765,8 @@ export const defaultLayer = Layer.suspend(() =>
         Bus.layer,
         CrossSpawnSpawner.defaultLayer,
         RuntimeFlags.defaultLayer,
+        SkillRouter.defaultLayer,
+        SkillActive.defaultLayer,
       ),
     ),
   ),

@@ -1,9 +1,9 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
-import { WebFetchTool } from "../../src/tool/webfetch"
+import { WebFetchTool, extractRelevantSections } from "../../src/tool/webfetch"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { Tool } from "@/tool/tool"
 import { testEffect } from "../lib/effect"
@@ -110,4 +110,78 @@ describe("tool.webfetch", () => {
         }),
     ),
   )
+
+  it.instance("returns only objective-relevant sections when objective is set", () =>
+    withFetch(
+      () =>
+        new Response(
+          [
+            "# Project README",
+            "",
+            "## Installation",
+            "Run npm install. Then start the server.",
+            "",
+            "## Authentication",
+            "We use OAuth2 with PKCE for authentication. Tokens expire in 1 hour.",
+            "Refresh tokens last 30 days.",
+            "",
+            "## Deployment",
+            "Deploy to AWS using Terraform. Run terraform apply in production.",
+          ].join("\n"),
+          { status: 200, headers: { "content-type": "text/markdown; charset=utf-8" } },
+        ),
+      (url) =>
+        Effect.gen(function* () {
+          const result = yield* exec({
+            url: new URL("/readme.md", url).toString(),
+            format: "markdown",
+            objective: "how does authentication and tokens work",
+          })
+          expect(result.output).toContain("OAuth2")
+          expect(result.output).toContain("Tokens expire")
+          expect(result.output).not.toContain("Terraform")
+          expect(result.metadata).toMatchObject({ objective: "how does authentication and tokens work" })
+        }),
+    ),
+  )
+})
+
+describe("extractRelevantSections", () => {
+  const md = [
+    "# Title",
+    "",
+    "## Alpha",
+    "alpha is about cats and dogs",
+    "",
+    "## Beta",
+    "beta talks about birds and birds and more birds",
+    "",
+    "## Gamma",
+    "gamma covers reptiles and amphibians",
+  ].join("\n")
+
+  test("ranks sections by objective token frequency", () => {
+    const result = extractRelevantSections(md, "tell me about birds", 10_000)
+    expect(result.kept).toBe(1)
+    expect(result.output).toContain("## Beta")
+    expect(result.output).not.toContain("alpha is about")
+  })
+
+  test("falls back to a flat slice when no section matches", () => {
+    const result = extractRelevantSections(md, "submarines and torpedoes", 10_000)
+    expect(result.kept).toBe(0)
+    expect(result.output).toContain("no sections matched")
+  })
+
+  test("respects maxChars budget", () => {
+    const long = Array.from({ length: 50 }, (_, i) => `## section${i}\n` + "birds ".repeat(200)).join("\n\n")
+    const result = extractRelevantSections(long, "birds", 5000)
+    expect(result.output.length).toBeLessThanOrEqual(5_500)
+  })
+
+  test("ignores stopword-only objectives", () => {
+    const result = extractRelevantSections(md, "the and is", 10_000)
+    expect(result.kept).toBe(0)
+    expect(result.total).toBe(0)
+  })
 })

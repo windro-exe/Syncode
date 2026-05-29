@@ -153,6 +153,13 @@ The section below is specific to wnxd's local clone. It does not exist upstream 
   - Replaces upstream's compaction loop: the prompt loop's overflow auto-trigger is neutered in `src/session/prompt.ts`, the system prompt now includes a live memory index in `src/session/system.ts`, and the `/remember` slash in `src/cli/cmd/tui/routes/session/index.tsx` pre-fills a snapshot directive
   - The model is responsible for persisting durable facts to memory before context overflows, instead of relying on summarization
 - **`CLAUDE.md` auto-loading disabled** in `src/session/instruction.ts`. opencode reads only `AGENTS.md` (this file) and the deprecated `CONTEXT.md`. The user does not want Claude Code's user-level rules bleeding into opencode sessions.
+- **Auto-skill router + TOC-based loading** (`src/skill/router.ts`, `src/skill/active.ts`, `src/tool/skill_section.ts`).
+  - Each turn, a small router model (DeepSeek-V4-Flash by default; configurable via `skills.router_model` in opencode.json) is given the user's message and the names+descriptions of every available skill, and picks ONE skill or `none`.
+  - When picked, the system prompt gets an `<active_skill>` block containing the skill's `rules` (negative prompts) and a `<table_of_contents>`. The full body is NOT injected.
+  - The model uses the new `skill_section` tool to fetch one or more sections by id when it needs detail. The old `skill` tool that loaded the whole body is removed.
+  - Skill schema extended: `rules: string[]` (always-on rules for that skill) and `sections: [{id, title}]` (declares the TOC; the body has matching `## <id>` headings). Skills with no `rules`/`sections` still work — they get one implicit `body` section.
+  - Active skill name is persisted on the assistant message (`MessageV2.Assistant.skill`) and shown as `→ <name>` in the TUI status row next to the context bar.
+- **Built-in `author-skill` skill** (`src/skill/prompt/author-skill.md`). Routes when the user asks to create or update a skill; teaches the schema, rule-writing conventions, and TOC structure so new skills are well-formed.
 
 Add new features here as they land.
 

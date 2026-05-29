@@ -30,3 +30,22 @@ export function isOverflow(input: {
     input.tokens.total || input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
   return count >= usable(input)
 }
+
+// Soft-checkpoint threshold. Research (Zylos/Anthropic) puts measurable model
+// quality degradation at 60-70% context fill — earlier than the 80% point
+// where whole-turn eviction (PRUNE_TURN_TRIGGER_FRACTION) actually runs. We use
+// this lower mark to nudge the model to persist durable facts to memory BEFORE
+// older turns get evicted, since eviction is otherwise unrecoverable mid-turn.
+export const SOFT_CHECKPOINT_FRACTION = 0.6
+
+export function isSoftCheckpoint(input: {
+  cfg: Config.Info
+  projected: number
+  model: Provider.Model
+  outputTokenMax?: number
+}) {
+  if (input.model.limit.context === 0) return false
+  const budget = usable(input)
+  if (budget <= 0) return false
+  return input.projected >= budget * SOFT_CHECKPOINT_FRACTION
+}

@@ -34,8 +34,16 @@ export const Event = {
 
 export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
+// Sliding-window prune: when whole-turn eviction runs, keep this fraction
+// of usable context as recent verbatim turns. Older turns get marked
+// pruned — their parts stay on disk and the model can read them back with
+// the `session_recall` tool (src/tool/session_recall.ts).
+export const PRUNE_TURN_KEEP_FRACTION = 0.6
+// Trigger pre-emptive whole-turn eviction when estimated prompt size
+// exceeds this fraction of usable context.
+export const PRUNE_TURN_TRIGGER_FRACTION = 0.8
 const TOOL_OUTPUT_MAX_CHARS = 2_000
-const PRUNE_PROTECTED_TOOLS = ["skill"]
+const PRUNE_PROTECTED_TOOLS = ["skill_section"]
 const DEFAULT_TAIL_TURNS = 2
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 8_000
@@ -188,7 +196,12 @@ export interface Interface {
     tokens: MessageV2.Assistant["tokens"]
     model: Provider.Model
   }) => Effect.Effect<boolean>
-  readonly prune: (input: { sessionID: SessionID }) => Effect.Effect<void>
+  readonly prune: (input: {
+    sessionID: SessionID
+    /** When set, also evict whole turns until kept tail ≤ keepTokens. */
+    model?: Provider.Model
+    keepTokens?: number
+  }) => Effect.Effect<void>
   readonly process: (input: {
     parentID: MessageID
     messages: MessageV2.WithParts[]
@@ -295,7 +308,11 @@ export const layer = Layer.effect(
 
     // goes backwards through parts until there are PRUNE_PROTECT tokens worth of tool
     // calls, then erases output of older tool calls to free context space
-    const prune = Effect.fn("SessionCompaction.prune")(function* (input: { sessionID: SessionID }) {
+    const prune = Effect.fn("SessionCompaction.prune")(function* (input: {
+      sessionID: SessionID
+      model?: Provider.Model
+      keepTokens?: number
+    }) {
       const cfg = yield* config.get()
       if (!cfg.compaction?.prune) return
       log.info("pruning")
@@ -338,6 +355,111 @@ export const layer = Layer.effect(
           }
         }
         log.info("pruned", { count: toPrune.length })
+      }
+
+      // Sliding-window pass: evict whole turns from the oldest end when
+      // requested. The caller passes `keepTokens` (roughly the size of
+      // recent turns we want to keep verbatim). We walk backwards from
+      // the most recent message, sum each turn's encoded size, and once
+      // we've banked `keepTokens` worth, mark everything older as
+      // `pruned`. The serializer (toModelMessagesEffect) replaces pruned
+      // messages with a placeholder; original parts stay on disk.
+      if (input.model && input.keepTokens && input.keepTokens > 0) {
+        const fresh = yield* session
+          .messages({ sessionID: input.sessionID })
+          .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(undefined)))
+        if (!fresh) return
+
+        // Find last summary boundary — never evict before a kept summary
+        // (legacy compaction left a checkpoint). Walking back from the end
+        // we treat any assistant-summary as the floor.
+        let floor = 0
+        for (let i = fresh.length - 1; i >= 0; i--) {
+          const m = fresh[i]
+          if (m.info.role === "assistant" && m.info.summary) {
+            floor = i + 1
+            break
+          }
+        }
+
+        // Group messages into turns (user + following assistants).
+        type TurnSpan = { start: number; end: number; size: number }
+        const spans: TurnSpan[] = []
+        let cursor = floor
+        while (cursor < fresh.length) {
+          if (fresh[cursor].info.role !== "user") {
+            cursor++
+            continue
+          }
+          let next = cursor + 1
+          while (next < fresh.length && fresh[next].info.role !== "user") next++
+          spans.push({ start: cursor, end: next, size: 0 })
+          cursor = next
+        }
+        if (spans.length === 0) return
+
+        if (spans.length <= 1) return
+
+        // Estimate each evictable span + the last span.
+        for (const span of spans) {
+          const slice = fresh.slice(span.start, span.end)
+          if (slice.some((m) => m.info.pruned)) continue
+          span.size = yield* estimate({ messages: slice, model: input.model })
+        }
+
+        // Walk backwards, banking `keepTokens` of recent turns. Anything
+        // earlier gets evicted.
+        let kept = 0
+        let cutoff = spans.length // index — everything before this gets pruned
+        for (let i = spans.length - 1; i >= 0; i--) {
+          const span = spans[i]
+          if (i === spans.length - 1) {
+            kept += span.size
+            cutoff = i
+            continue
+          }
+          if (kept + span.size <= input.keepTokens) {
+            kept += span.size
+            cutoff = i
+            continue
+          }
+          break
+        }
+
+        if (cutoff <= 0) {
+          log.info("turn-evict.skip", { reason: "nothing_older_than_cutoff" })
+          return
+        }
+
+        let evictedTurns = 0
+        let evictedMessages = 0
+        const stamp = Date.now()
+        for (let i = 0; i < cutoff; i++) {
+          const span = spans[i]
+          for (let m = span.start; m < span.end; m++) {
+            const message = fresh[m]
+            if (message.info.pruned) continue
+            // Don't evict an assistant message that is mid-flight (no completed time)
+            // or one that carries a summary checkpoint.
+            if (message.info.role === "assistant") {
+              if (message.info.summary) continue
+              if (!message.info.time.completed) continue
+            }
+            // Don't mutate the live reference — updateMessage doesn't deep-copy
+            // (asymmetric with updatePart which does), so any subscriber that
+            // retains the reference would see a mutated info.
+            const updated = { ...message.info, pruned: stamp } as MessageV2.Info
+            yield* session.updateMessage(updated)
+            evictedMessages++
+          }
+          evictedTurns++
+        }
+        log.info("turn-evict", {
+          evictedTurns,
+          evictedMessages,
+          kept,
+          target: input.keepTokens,
+        })
       }
     })
 

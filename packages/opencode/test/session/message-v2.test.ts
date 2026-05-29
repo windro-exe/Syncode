@@ -1546,6 +1546,44 @@ describe("session.message-v2.fromError", () => {
 
     expect(result.name).toBe("MessageAbortedError")
   })
+
+  test("classifies a mid-stream socket abort (APICallError message 'aborted') as retryable", () => {
+    const error = new APICallError({
+      message: "aborted",
+      url: "https://example.com",
+      requestBodyValues: {},
+      isRetryable: false,
+    })
+
+    const result = MessageV2.fromError(error, { providerID })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toInclude("aborted by server")
+  })
+
+  test("classifies a raw UND_ERR_ABORTED socket error as retryable", () => {
+    const error = new Error("aborted")
+    ;(error as any).code = "UND_ERR_ABORTED"
+
+    const result = MessageV2.fromError(error, { providerID })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+  })
+
+  test("a socket abort during a user-initiated abort stays an AbortedError (not retried)", () => {
+    const error = new APICallError({
+      message: "aborted",
+      url: "https://example.com",
+      requestBodyValues: {},
+      isRetryable: false,
+    })
+
+    const result = MessageV2.fromError(error, { providerID, aborted: true })
+
+    expect(result.name).toBe("MessageAbortedError")
+  })
 })
 
 describe("session.message-v2.latest", () => {

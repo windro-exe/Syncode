@@ -37,6 +37,9 @@ import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { SessionV2 } from "../../src/v2/session"
 import { Skill } from "../../src/skill"
+import { SkillActive } from "../../src/skill/active"
+import { SkillRouter } from "../../src/skill/router"
+import { Memory } from "../../src/memory/memory"
 import { SystemPrompt } from "../../src/session/system"
 import { Shell } from "../../src/shell/shell"
 import { Snapshot } from "../../src/snapshot"
@@ -183,6 +186,9 @@ function makePrompt(input?: { processor?: "blocking" }) {
     status,
     SyncEvent.defaultLayer,
     EventV2Bridge.defaultLayer,
+    SkillActive.defaultLayer,
+    Memory.defaultLayer,
+    SkillRouter.defaultLayer,
   ).pipe(Layer.provideMerge(infra))
   const question = Question.layer.pipe(Layer.provideMerge(deps))
   const todo = Todo.layer.pipe(Layer.provideMerge(deps))

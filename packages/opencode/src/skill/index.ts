@@ -15,6 +15,7 @@ import { Glob } from "@opencode-ai/core/util/glob"
 import * as Log from "@opencode-ai/core/util/log"
 import { Discovery } from "./discovery"
 import CUSTOMIZE_OPENCODE_SKILL_BODY from "./prompt/customize-opencode.md" with { type: "text" }
+import AUTHOR_SKILL_SKILL_BODY from "./prompt/author-skill.md" with { type: "text" }
 import { isRecord } from "@/util/record"
 
 const log = Log.create({ service: "skill" })
@@ -33,11 +34,24 @@ const CUSTOMIZE_OPENCODE_SKILL_NAME = "customize-opencode"
 const CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION =
   "Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself."
 
+const AUTHOR_SKILL_SKILL_NAME = "author-skill"
+const AUTHOR_SKILL_SKILL_DESCRIPTION =
+  "Use ONLY when the user explicitly asks to create a new opencode skill (a SKILL.md file) or to modify the YAML frontmatter or section structure of an existing one. Do NOT use for debugging why a skill isn't firing, asking what a skill does, or general questions about the skill system."
+
+export const SkillSection = Schema.Struct({
+  id: Schema.String,
+  title: Schema.optional(Schema.String),
+  content: Schema.String,
+})
+export type SkillSection = Schema.Schema.Type<typeof SkillSection>
+
 export const Info = Schema.Struct({
   name: Schema.String,
   description: Schema.optional(Schema.String),
   location: Schema.String,
   content: Schema.String,
+  rules: Schema.Array(Schema.String),
+  sections: Schema.Array(SkillSection),
 })
 export type Info = Schema.Schema.Type<typeof Info>
 
@@ -49,12 +63,81 @@ const Issue = Schema.StructWithRest(
   [Schema.Record(Schema.String, Schema.Unknown)],
 )
 
-function isSkillFrontmatter(data: unknown): data is { name: string; description?: string } {
+function isSkillFrontmatter(data: unknown): data is {
+  name: string
+  description?: string
+  rules?: unknown
+  sections?: unknown
+} {
   return (
     isRecord(data) &&
     typeof data.name === "string" &&
     (data.description === undefined || typeof data.description === "string")
   )
+}
+
+function parseRules(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim())
+}
+
+type SectionDecl = { id: string; title?: string }
+
+function parseSectionDecls(raw: unknown): SectionDecl[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((entry) => {
+    if (typeof entry === "string" && entry.trim()) return [{ id: entry.trim() }]
+    if (isRecord(entry) && typeof entry.id === "string" && entry.id.trim()) {
+      return [{ id: entry.id.trim(), title: typeof entry.title === "string" ? entry.title : undefined }]
+    }
+    return []
+  })
+}
+
+// Splits skill body into named sections by `## <id>` headings.
+// Falls back to one implicit "body" section when no decls are given or the
+// body has no matching headings — preserves existing skills unchanged.
+// Skips lines inside fenced code blocks (``` or ~~~) so an embedded SKILL.md
+// template doesn't get parsed as real section markers.
+function splitSections(content: string, decls: SectionDecl[]): { id: string; title?: string; content: string }[] {
+  const trimmed = content.trim()
+  if (decls.length === 0) {
+    return [{ id: "body", title: undefined, content: trimmed }]
+  }
+
+  const lines = content.split(/\r?\n/)
+  const buckets = new Map<string, string[]>()
+  let current: string | null = null
+  let fence: string | null = null
+  for (const line of lines) {
+    const fenceMatch = line.match(/^\s*(```+|~~~+)/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]
+      if (fence === null) fence = marker
+      else if (marker.startsWith(fence[0]) && marker.length >= fence.length) fence = null
+    }
+    if (fence === null) {
+      const m = line.match(/^##\s+(.+?)\s*#*\s*$/)
+      if (m) {
+        const heading = m[1].trim().toLowerCase()
+        const matched = decls.find((d) => d.id.toLowerCase() === heading)
+        if (matched) {
+          current = matched.id
+          if (!buckets.has(current)) buckets.set(current, [])
+          continue
+        }
+      }
+    }
+    if (current) buckets.get(current)!.push(line)
+  }
+
+  const named = decls
+    .filter((d) => buckets.has(d.id))
+    .map((d) => ({ id: d.id, title: d.title, content: buckets.get(d.id)!.join("\n").trim() }))
+  if (named.length > 0) return named
+
+  // No section markers in body — fall back to one implicit body section.
+  return [{ id: "body", title: undefined, content: trimmed }]
 }
 
 export class InvalidError extends Schema.TaggedErrorClass<InvalidError>()("SkillInvalidError", {
@@ -132,11 +215,27 @@ const add = Effect.fnUntraced(function* (state: State, match: string, bus: Bus.I
   }
 
   state.dirs.add(path.dirname(match))
+  const rules = parseRules((md.data as { rules?: unknown }).rules)
+  const decls = parseSectionDecls((md.data as { sections?: unknown }).sections)
+  const sections = splitSections(md.content, decls)
+  if (decls.length > 0) {
+    const matched = new Set(sections.map((s) => s.id))
+    const missing = decls.filter((d) => !matched.has(d.id)).map((d) => d.id)
+    if (missing.length > 0) {
+      log.warn("skill section decls have no matching `## <id>` heading in body", {
+        skill: md.data.name,
+        missing,
+        path: match,
+      })
+    }
+  }
   state.skills[md.data.name] = {
     name: md.data.name,
     description: md.data.description,
     location: match,
     content: md.content,
+    rules,
+    sections,
   }
 })
 
@@ -276,6 +375,29 @@ export const layer = Layer.effect(
           description: CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION,
           location: "<built-in>",
           content: CUSTOMIZE_OPENCODE_SKILL_BODY,
+          rules: [],
+          sections: [{ id: "body", title: undefined, content: CUSTOMIZE_OPENCODE_SKILL_BODY.trim() }],
+        }
+        s.skills[AUTHOR_SKILL_SKILL_NAME] = {
+          name: AUTHOR_SKILL_SKILL_NAME,
+          description: AUTHOR_SKILL_SKILL_DESCRIPTION,
+          location: "<built-in>",
+          content: AUTHOR_SKILL_SKILL_BODY,
+          rules: [
+            "Every skill MUST have a name, description, and at least one section",
+            "The description MUST start with 'Use when' and name a specific trigger so the auto-router can match it",
+            "Section ids MUST be lowercase or kebab-case and match a `## <id>` heading in the body",
+            "Rules MUST be imperative (Never X / Always Y) and skill-specific — never restate generic good behavior",
+            "After creating or editing a skill, tell the user to quit and restart opencode for the change to take effect",
+          ],
+          sections: splitSections(AUTHOR_SKILL_SKILL_BODY, [
+            { id: "file-layout", title: "Where the SKILL.md file lives" },
+            { id: "template", title: "Full SKILL.md template" },
+            { id: "description", title: "Writing the description" },
+            { id: "rules", title: "Writing rules" },
+            { id: "sections", title: "Writing sections" },
+            { id: "checklist", title: "Pre-save checklist" },
+          ]),
         }
         yield* loadSkills(s, yield* InstanceState.get(discovered), bus)
         return s

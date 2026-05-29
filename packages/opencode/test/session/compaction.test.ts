@@ -746,7 +746,7 @@ describe("session.compaction.prune", () => {
           sessionID: info.id,
           type: "tool",
           callID: crypto.randomUUID(),
-          tool: "skill",
+          tool: "skill_section",
           state: {
             status: "completed",
             input: {},

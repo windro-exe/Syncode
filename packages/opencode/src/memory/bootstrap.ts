@@ -1,9 +1,11 @@
 import os from "os"
 import { Effect } from "effect"
 import { Memory } from "./memory"
+import type { SessionID } from "@/session/schema"
 
 const SYSTEM_PATH = "/memories/system.md"
 const AGENT_PATH = "/memories/agent.md"
+const SESSION_PLAN_PATH = "/memories/_plan.md"
 
 function detect() {
   const username = os.userInfo().username
@@ -97,6 +99,54 @@ export const ensureGlobalSeeds = Effect.fn("Memory.bootstrap")(function* (memory
         content: buildAgentMd(),
         tags: ["preferences"],
         ctx: {},
+      })
+      .pipe(Effect.ignore)
+  }
+})
+
+function buildSessionPlanMd() {
+  return [
+    "# Session plan",
+    "",
+    "_Working notes for this conversation only. Update as the task evolves so a future turn can resume cleanly. Use the memory tool with command=str_replace to fill the `_unset_` markers; use command=insert or str_replace again to keep them current._",
+    "",
+    "## Goal",
+    "_unset_",
+    "",
+    "## Plan",
+    "_unset_",
+    "",
+    "## Decisions made this session",
+    "_unset_",
+    "",
+    "## In-progress / next step",
+    "_unset_",
+    "",
+    "## Open questions / blockers",
+    "_unset_",
+    "",
+    "## Tried and didn't work",
+    "_unset_",
+    "",
+  ].join("\n")
+}
+
+export const ensureSessionSeeds = Effect.fn("Memory.bootstrap.session")(function* (
+  memory: Memory.Interface,
+  sessionID: SessionID,
+) {
+  const idx = yield* memory.index({ ctx: { sessionID } })
+  const has = (p: string) => idx.session.some((e) => e.path === p)
+
+  if (!has(SESSION_PLAN_PATH)) {
+    yield* memory
+      .create({
+        scope: "session",
+        path: SESSION_PLAN_PATH,
+        title: "Session plan",
+        content: buildSessionPlanMd(),
+        tags: ["plan", "auto"],
+        ctx: { sessionID },
       })
       .pipe(Effect.ignore)
   }

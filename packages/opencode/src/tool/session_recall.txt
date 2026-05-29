@@ -1,0 +1,16 @@
+Recall the verbatim content of earlier conversation turns that were evicted from the active context window to save space.
+
+When the context window fills up, older turns are dropped from what you can see and replaced with a "[older context evicted to fit window]" placeholder. The full content still exists on disk — this tool reads it back.
+
+Use this when:
+- You see an "[older context evicted to fit window]" placeholder and need what was there.
+- The user refers to something from earlier in the session that you can no longer see.
+- You need a decision, file path, error string, or instruction from a turn that has scrolled out of context.
+
+Parameters:
+- `query` (optional): case-insensitive substring filter. Only evicted turns whose text contains it are returned. Omit to list everything that was evicted.
+- `limit` (optional, default 10): maximum number of evicted turns to return, most recent first.
+
+This is a read-only lookup — it does not change what is in the context window. Recalled content is returned only in this tool result; to keep a fact available across future turns, write it to memory.
+
+If nothing has been evicted yet, the tool says so. Prefer a `query` when you know what you are looking for — it keeps the result small.

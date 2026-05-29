@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { parseResponse } from "../../src/tool/mcp-websearch"
-import { selectWebSearchProvider, webSearchModelName, webSearchProviderLabel } from "../../src/tool/websearch"
+import { extractUrls, selectWebSearchProvider, webSearchModelName, webSearchProviderLabel } from "../../src/tool/websearch"
 import { ProviderID } from "../../src/provider/schema"
 import { webSearchEnabled } from "../../src/tool/registry"
 import { it } from "../lib/effect"
@@ -95,4 +95,35 @@ describe("websearch MCP response parser", () => {
       expect(result).toBe("search results")
     }),
   )
+})
+
+describe("extractUrls", () => {
+  test("extracts http(s) urls preserving order, deduped", () => {
+    const text = `
+      First source: https://example.com/article-1
+      Second: https://other.org/path?q=1#frag
+      And again https://example.com/article-1 (dup)
+      Trailing punct: https://foo.com/page.
+    `
+    expect(extractUrls(text)).toEqual([
+      "https://example.com/article-1",
+      "https://other.org/path?q=1#frag",
+      "https://foo.com/page",
+    ])
+  })
+
+  test("filters out asset and tracking URLs", () => {
+    const text = `
+      content: https://docs.example.com/guide
+      icon: https://cdn.example.com/favicon.ico
+      analytics: https://www.google-analytics.com/collect
+      js: https://example.com/app.js?v=2
+      schema: https://schema.org/Article
+    `
+    expect(extractUrls(text)).toEqual(["https://docs.example.com/guide"])
+  })
+
+  test("returns empty array on plain text", () => {
+    expect(extractUrls("no urls here, only words")).toEqual([])
+  })
 })

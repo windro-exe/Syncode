@@ -88,9 +88,76 @@ const cli = yargs(args)
     describe: "run without external plugins",
     type: "boolean",
   })
+  .option("custom-prompt", {
+    describe:
+      "override the system prompt for matching models. format: <providerID>/<modelID>=<path-to-prompt-file>. wildcards allowed (anthropic/*, */claude-opus-4-7, *claude*). repeatable.",
+    type: "string",
+    array: true,
+  })
   .middleware(async (opts) => {
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
+    }
+
+    if (opts.customPrompt && opts.customPrompt.length > 0) {
+      const entries: Array<{ providerID: string; modelID: string; prompt: string }> = []
+      for (const raw of opts.customPrompt as string[]) {
+        const eq = raw.indexOf("=")
+        if (eq <= 0) {
+          process.stderr.write(
+            `--custom-prompt: skipping malformed entry (missing '='): ${raw}${EOL}`,
+          )
+          continue
+        }
+        const target = raw.slice(0, eq).trim()
+        const filePath = raw.slice(eq + 1).trim()
+        const slash = target.indexOf("/")
+        if (slash <= 0) {
+          process.stderr.write(
+            `--custom-prompt: skipping malformed entry (expected providerID/modelID=path): ${raw}${EOL}`,
+          )
+          continue
+        }
+        const providerID = target.slice(0, slash)
+        const modelID = target.slice(slash + 1)
+        const expanded = filePath.startsWith("~/")
+          ? path.join(process.env.HOME ?? process.env.USERPROFILE ?? "", filePath.slice(2))
+          : filePath
+        const file = Bun.file(expanded)
+        if (!(await file.exists())) {
+          process.stderr.write(`--custom-prompt: file not found, skipping: ${expanded}${EOL}`)
+          continue
+        }
+        const prompt = await file.text()
+        if (!prompt.trim()) {
+          process.stderr.write(`--custom-prompt: file is empty, skipping: ${expanded}${EOL}`)
+          continue
+        }
+        entries.push({ providerID, modelID, prompt })
+      }
+      if (entries.length > 0) {
+        // Windows env vars are capped at ~32KB per key; large prompt bodies
+        // silently truncate. Ferry through a temp file and pass only its
+        // path so spawned subprocesses inherit the path safely.
+        const payload = JSON.stringify(entries)
+        try {
+          const tmpDir = path.join(Global.Path.data, "tmp")
+          await Bun.write(path.join(tmpDir, ".keep"), "")
+          const tmpFile = path.join(tmpDir, `custom-prompts-${process.pid}-${Date.now()}.json`)
+          await Bun.write(tmpFile, payload)
+          process.env.OPENCODE_CUSTOM_PROMPTS_FILE = tmpFile
+          process.on("exit", () => {
+            try {
+              require("fs").unlinkSync(tmpFile)
+            } catch {}
+          })
+        } catch (e) {
+          process.stderr.write(
+            `--custom-prompt: failed to stage temp file (${String(e).slice(0, 120)}); falling back to inline env (may truncate on Windows)${EOL}`,
+          )
+          process.env.OPENCODE_CUSTOM_PROMPTS = payload
+        }
+      }
     }
 
     await Log.init({

@@ -19,7 +19,7 @@ import { Parameters as Plan } from "../../src/tool/plan"
 import { Parameters as Question } from "../../src/tool/question"
 import { Parameters as Read } from "../../src/tool/read"
 import { Parameters as Shell } from "../../src/tool/shell"
-import { Parameters as Skill } from "../../src/tool/skill"
+import { Parameters as Skill } from "../../src/tool/skill_section"
 import { Parameters as Task } from "../../src/tool/task"
 import { Parameters as Todo } from "../../src/tool/todo"
 import { Parameters as WebFetch } from "../../src/tool/webfetch"
@@ -46,7 +46,7 @@ describe("tool parameters", () => {
     test("plan", () => expect(toJsonSchema(Plan)).toMatchSnapshot())
     test("question", () => expect(toJsonSchema(Question)).toMatchSnapshot())
     test("read", () => expect(toJsonSchema(Read)).toMatchSnapshot())
-    test("skill", () => expect(toJsonSchema(Skill)).toMatchSnapshot())
+    test("skill_section", () => expect(toJsonSchema(Skill)).toMatchSnapshot())
     test("task", () => expect(toJsonSchema(Task)).toMatchSnapshot())
     test("todo", () => expect(toJsonSchema(Todo)).toMatchSnapshot())
     test("webfetch", () => expect(toJsonSchema(WebFetch)).toMatchSnapshot())
@@ -221,11 +221,15 @@ describe("tool parameters", () => {
     })
   })
 
-  describe("skill", () => {
-    test("accepts name", () => {
-      expect(parse(Skill, { name: "foo" }).name).toBe("foo")
+  describe("skill_section", () => {
+    test("accepts sections array", () => {
+      expect(parse(Skill, { sections: ["workflow", "checklist"] }).sections).toEqual(["workflow", "checklist"])
     })
-    test("rejects missing name", () => {
+    test("accepts optional skill name", () => {
+      const parsed = parse(Skill, { skill: "review-pr", sections: ["workflow"] })
+      expect(parsed.skill).toBe("review-pr")
+    })
+    test("rejects missing sections", () => {
       expect(accepts(Skill, {})).toBe(false)
     })
   })

@@ -7,6 +7,7 @@ import type { MessageV2 } from "../message-v2"
 import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { SystemPrompt } from "../system"
+import { CustomPrompts } from "../custom-prompts"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Record } from "effect"
 import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
@@ -53,26 +54,50 @@ const mergeOptions = (target: Record<string, any>, source: Record<string, any> |
 
 export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: PrepareInput) {
   const isOpenaiOauth = input.provider.id === "openai" && input.auth?.type === "oauth"
-  const system = [
-    [
-      ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
-      ...input.system,
-      ...(input.user.system ? [input.user.system] : []),
-    ]
-      .filter((x) => x)
-      .join("\n"),
-  ]
+  const customPrompt = CustomPrompts.getCustomPrompt(input.model.providerID, input.model.api.id)
+
+  // Custom-prompt isolation: when --custom-prompt matches, replace the
+  // built-in per-model prompt AND drop env/agent-prompt/user-system/
+  // plugin-transforms. The instruction blocks (AGENTS.md / CONTEXT.md),
+  // memory index, and active-skill block STILL flow through — they each
+  // arrive in input.system with stable opening markers we filter for.
+  // The `<agents-md>` order: AGENTS appended last so it has the strongest
+  // recency bias on models that anchor on the end of the system block.
+  // Collapse to a single system string the same way the default branch
+  // does — sending multiple `role: "system"` messages confuses some
+  // proxies (Kiro returns empty completions in this mode).
+  const system = customPrompt
+    ? [
+        [
+          customPrompt,
+          ...input.system.filter(isMemoryOrSkillBlock),
+          ...input.system.filter(isInstructionBlock),
+        ]
+          .filter((x) => x)
+          .join("\n"),
+      ]
+    : [
+        [
+          ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
+          ...input.system,
+          ...(input.user.system ? [input.user.system] : []),
+        ]
+          .filter((x) => x)
+          .join("\n"),
+      ]
 
   const header = system[0]
-  yield* input.plugin.trigger(
-    "experimental.chat.system.transform",
-    { sessionID: input.sessionID, model: input.model },
-    { system },
-  )
-  if (system.length > 2 && system[0] === header) {
-    const rest = system.slice(1)
-    system.length = 0
-    system.push(header, rest.join("\n"))
+  if (!customPrompt) {
+    yield* input.plugin.trigger(
+      "experimental.chat.system.transform",
+      { sessionID: input.sessionID, model: input.model },
+      { system },
+    )
+    if (system.length > 2 && system[0] === header) {
+      const rest = system.slice(1)
+      system.length = 0
+      system.push(header, rest.join("\n"))
+    }
   }
 
   const variant =
@@ -201,6 +226,21 @@ export function hasToolCalls(messages: ModelMessage[]): boolean {
     }
   }
   return false
+}
+
+// Identify the memory + active-skill blocks in input.system so that
+// custom-prompt mode can keep them while dropping everything else. Both
+// blocks are emitted by SystemPrompt with stable opening tags.
+function isMemoryOrSkillBlock(s: string): boolean {
+  const trimmed = s.trimStart()
+  return trimmed.startsWith("<memory>") || trimmed.startsWith("<active_skill")
+}
+
+// Instruction.system() prefixes every AGENTS.md / CONTEXT.md block with
+// "Instructions from: <path>\n<content>". Match that prefix to keep
+// project-level rules in custom-prompt mode.
+function isInstructionBlock(s: string): boolean {
+  return s.trimStart().startsWith("Instructions from:")
 }
 
 export * as LLMRequestPrep from "./request"

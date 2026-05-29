@@ -299,17 +299,24 @@ exports[`tool parameters JSON Schema (wire shape) read 1`] = `
 }
 `;
 
-exports[`tool parameters JSON Schema (wire shape) skill 1`] = `
+exports[`tool parameters JSON Schema (wire shape) skill_section 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "name": {
-      "description": "The name of the skill from available_skills",
+    "sections": {
+      "description": "Section ids to fetch from the chosen skill's table of contents.",
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "skill": {
+      "description": "Name of the active skill to fetch sections from. Required when multiple skills are active; optional when only one is active (defaults to the single active skill).",
       "type": "string",
     },
   },
   "required": [
-    "name",
+    "sections",
   ],
   "type": "object",
 }
@@ -412,6 +419,14 @@ exports[`tool parameters JSON Schema (wire shape) webfetch 1`] = `
         },
       ],
     },
+    "maxChars": {
+      "description": "Optional cap on returned characters after extraction (default 50000, hard max 100000). Lower values force tighter focus when an objective is set.",
+      "type": "number",
+    },
+    "objective": {
+      "description": "Optional natural-language goal. When set, only sections most relevant to the objective are returned (lexical scoring across markdown headings/paragraphs). Use this to dig into a long page without dumping irrelevant content into context.",
+      "type": "string",
+    },
     "timeout": {
       "description": "Optional timeout in seconds (max 120)",
       "type": "number",
@@ -436,6 +451,14 @@ exports[`tool parameters JSON Schema (wire shape) websearch 1`] = `
       "description": "Maximum characters for context string optimized for LLMs (default: 10000)",
       "type": "number",
     },
+    "deep": {
+      "description": "When true, parallel-fetch the top results' full pages and inline their relevant sections (objective-scored against the query). Costs more time and bandwidth — use for research tasks where snippets aren't enough.",
+      "type": "boolean",
+    },
+    "fetchCharsPerResult": {
+      "description": "Per-page character budget when deep=true (default 3000, hard max 8000).",
+      "type": "number",
+    },
     "livecrawl": {
       "description": "Live crawl mode - 'fallback': use live crawling as backup if cached content unavailable, 'preferred': prioritize live crawling (default: 'fallback')",
       "enum": [
@@ -443,6 +466,10 @@ exports[`tool parameters JSON Schema (wire shape) websearch 1`] = `
         "preferred",
       ],
       "type": "string",
+    },
+    "maxFetch": {
+      "description": "Max pages to deep-fetch when deep=true (default 5, hard max 10).",
+      "type": "number",
     },
     "numResults": {
       "description": "Number of search results to return (default: 8)",

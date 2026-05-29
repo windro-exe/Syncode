@@ -505,7 +505,7 @@ function AssistantTool(props: { part: SessionMessageAssistantTool; sessionID: st
       <Match when={props.part.name === "question"}>
         <Question {...toolprops} />
       </Match>
-      <Match when={props.part.name === "skill"}>
+      <Match when={props.part.name === "skill_section"}>
         <Skill {...toolprops} />
       </Match>
       <Match when={props.part.name === "task"}>
@@ -1027,9 +1027,14 @@ function Question(props: ToolProps) {
 }
 
 function Skill(props: ToolProps) {
+  const sections = () => {
+    const raw = props.input?.sections
+    if (Array.isArray(raw)) return raw.filter((s): s is string => typeof s === "string").join(", ")
+    return undefined
+  }
   return (
-    <InlineTool icon="→" pending="Loading skill..." complete={toolComplete(props.part)} part={props.part}>
-      Skill "{stringValue(props.input.name) ?? pendingInput(props.part)}"
+    <InlineTool icon="→" pending="Loading skill section..." complete={toolComplete(props.part)} part={props.part}>
+      Skill section{sections()?.includes(",") ? "s" : ""}: {sections() ?? pendingInput(props.part)}
     </InlineTool>
   )
 }

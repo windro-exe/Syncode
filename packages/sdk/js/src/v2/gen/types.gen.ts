@@ -27,6 +27,9 @@ export type Event =
   | EventTodoUpdated
   | EventSessionStatus
   | EventSessionIdle
+  | EventMemoryCreated
+  | EventMemoryUpdated
+  | EventMemoryDeleted
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
@@ -352,6 +355,23 @@ export type SessionStatus =
       type: "busy"
     }
 
+export type MemoryScope = "global" | "session"
+
+export type MemoryEntry = {
+  id: string
+  scope: MemoryScope
+  sessionID?: string
+  path: string
+  title?: string
+  content: string
+  tags: Array<string>
+  pinned: boolean
+  accessCount: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  timeAccessed: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  timeCreated: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  timeUpdated: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
 export type Project = {
   id: string
   worktree: string
@@ -453,6 +473,7 @@ export type AssistantMessage = {
     root: string
   }
   summary?: boolean
+  skill?: string
   cost: number
   tokens: {
     total?: number
@@ -828,6 +849,9 @@ export type GlobalEvent = {
     | EventTodoUpdated
     | EventSessionStatus
     | EventSessionIdle
+    | EventMemoryCreated
+    | EventMemoryUpdated
+    | EventMemoryDeleted
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
     | EventCommandExecuted
@@ -1193,6 +1217,8 @@ export type Config = {
   skills?: {
     paths?: Array<string>
     urls?: Array<string>
+    router_model?: string
+    router_enabled?: boolean
   }
   reference?: ReferenceConfig
   watcher?: {
@@ -1967,6 +1993,21 @@ export type EffectHttpApiErrorForbidden = {
   _tag: "Forbidden"
 }
 
+export type MemoryEntry1 = {
+  id: string
+  scope: MemoryScope
+  sessionID?: string
+  path: string
+  title?: string
+  content: string
+  tags: Array<string>
+  pinned: boolean
+  accessCount: number | "NaN" | "Infinity" | "-Infinity"
+  timeAccessed: number | "NaN" | "Infinity" | "-Infinity"
+  timeCreated: number | "NaN" | "Infinity" | "-Infinity"
+  timeUpdated: number | "NaN" | "Infinity" | "-Infinity"
+}
+
 export type SyncEventMessageUpdated = {
   type: "sync"
   name: "message.updated.1"
@@ -2651,6 +2692,28 @@ export type EventSessionIdle = {
   type: "session.idle"
   properties: {
     sessionID: string
+  }
+}
+
+export type EventMemoryCreated = {
+  id: string
+  type: "memory.created"
+  properties: MemoryEntry
+}
+
+export type EventMemoryUpdated = {
+  id: string
+  type: "memory.updated"
+  properties: MemoryEntry
+}
+
+export type EventMemoryDeleted = {
+  id: string
+  type: "memory.deleted"
+  properties: {
+    scope: MemoryScope
+    sessionID?: string
+    path: string
   }
 }
 
@@ -5004,6 +5067,12 @@ export type AppSkillsResponses = {
     description?: string
     location: string
     content: string
+    rules: Array<string>
+    sections: Array<{
+      id: string
+      title?: string
+      content: string
+    }>
   }>
 }
 
