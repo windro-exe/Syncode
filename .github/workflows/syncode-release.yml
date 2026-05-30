@@ -1,0 +1,60 @@
+# Syncode cross-OS release builder.
+#
+# READY FOR THE FUTURE CI ACCOUNT. Actions are currently DISABLED on this repo,
+# so this does not run. When you move to an account with Actions credits, enable
+# Actions and push a tag like `v1.16.13-wnxd` to build + publish installers for
+# every OS. Refine signing/notarization as needed before relying on it.
+name: syncode-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+          - os: macos-latest
+            label: macos
+          - os: windows-latest
+            label: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install deps
+        run: bun install
+      - name: Build CLI (all targets)
+        env:
+          OPENCODE_VERSION: ${{ github.ref_name }}
+        run: bun run build
+        working-directory: packages/opencode
+      - name: Build desktop installer (${{ matrix.label }})
+        env:
+          OPENCODE_VERSION: ${{ github.ref_name }}
+          OPENCODE_CHANNEL: prod
+        run: |
+          bun run build
+          bunx electron-builder --${{ matrix.label == 'macos' && 'mac' || matrix.label == 'windows' && 'win' || 'linux' }} --config electron-builder.config.ts
+        working-directory: packages/desktop
+      - name: Publish to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/opencode/dist/opencode-*/bin/opencode*
+            packages/desktop/dist/*.exe
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+            packages/desktop/dist/*.AppImage
+            packages/desktop/dist/*.deb
+            packages/desktop/dist/*.rpm
