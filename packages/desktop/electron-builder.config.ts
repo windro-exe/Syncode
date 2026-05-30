@@ -59,9 +59,11 @@ const getBase = (): Configuration => ({
   },
   win: {
     icon: `resources/icons/icon.ico`,
-    signtoolOptions: {
-      sign: signWindows,
-    },
+    // Only wire signing under CI. Locally signWindows is a no-op, but merely
+    // declaring signtoolOptions makes electron-builder download+extract the
+    // winCodeSign tooling, which fails on Windows without admin/Developer Mode
+    // (it contains macOS symlinks). Omit it locally so unsigned local builds work.
+    ...(process.env.GITHUB_ACTIONS === "true" ? { signtoolOptions: { sign: signWindows } } : {}),
     target: ["nsis"],
     verifyUpdateCodeSignature: false,
   },
