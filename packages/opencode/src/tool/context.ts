@@ -17,7 +17,7 @@ type Metadata = {
   pruned: number
 }
 
-const n = (x: number) => Math.round(x).toLocaleString()
+const n = (x: number) => Math.round(x).toLocaleString("en-US")
 
 // Sum estimated tokens of either the text/reasoning parts or the completed
 // tool outputs across a set of messages, plus a count of how many parts.

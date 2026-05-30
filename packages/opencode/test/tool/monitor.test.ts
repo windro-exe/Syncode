@@ -88,6 +88,25 @@ describe("tool.monitor", () => {
     }),
   )
 
+  it.instance("pushes a final line with no trailing newline back", () =>
+    Effect.gen(function* () {
+      const injected: string[] = []
+      const ctx = makeCtx(fakeOps(injected))
+
+      // printf emits no trailing newline — the matching line lives only in the
+      // residual buffer after the stream ends, exercising the flush fix.
+      const result = yield* monitor({ command: "printf MATCH_NONL", description: "no-nl", pattern: "MATCH" }, ctx)
+      const jobs = yield* BackgroundJob.Service
+      yield* jobs.wait({ id: result.metadata.jobId as string, timeout: 15_000 })
+
+      yield* pollWithTimeout(
+        Effect.sync(() => (injected.some((t) => t.includes("MATCH_NONL")) ? (true as const) : undefined)),
+        "monitor never pushed the no-newline final line",
+      )
+      expect(injected.some((t) => t.includes("MATCH_NONL"))).toBe(true)
+    }),
+  )
+
   it.instance("rejects an invalid regex pattern", () =>
     Effect.gen(function* () {
       const ctx = makeCtx(fakeOps([]))

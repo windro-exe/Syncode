@@ -9,6 +9,7 @@ import { Truncate } from "./truncate"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { InstanceState } from "@/effect/instance-state"
 import { cmd } from "./shell"
+import { Identifier } from "@/id/id"
 import type { TaskPromptOps } from "./task"
 
 export const Parameters = Schema.Struct({
@@ -110,21 +111,29 @@ export const MonitorTool = Tool.define<
           const env = process.env
           const outputPath = yield* trunc.write("")
           const command = params.command
+          // Pre-generate the id so the pushed notifications carry the SAME id
+          // that `tasks list`/`stop` use — otherwise the model can't stop it.
+          const jobId = Identifier.ascending("job")
 
           const job = yield* background.start({
+            id: jobId,
             type: "monitor",
             title: params.description,
             metadata: { command, outputPath, pattern: params.pattern },
             run: Effect.scoped(
               Effect.gen(function* () {
                 const sink = createWriteStream(outputPath, { flags: "a" })
+                // Swallow stream errors (EPIPE/ENOSPC) so they can't become an
+                // uncaught exception that takes down the process.
+                sink.on("error", () => {})
                 yield* Effect.addFinalizer(() => Effect.sync(() => sink.end()))
                 const handle = yield* spawner.spawn(cmd(shell, command, cwd, env))
 
                 let buffer = ""
                 let count = 0
-                const jobId = outputPath
 
+                // catchCause (not Effect.ignore) so a defect from prompt()
+                // (it wraps failures with Effect.die) can't fault the job.
                 const inject = (text: string) =>
                   ops
                     .prompt({
@@ -132,7 +141,18 @@ export const MonitorTool = Tool.define<
                       agent: ctx.agent,
                       parts: [{ type: "text", synthetic: true, text }],
                     })
-                    .pipe(Effect.ignore)
+                    .pipe(Effect.catchCause(() => Effect.void))
+
+                const handleLine = (raw: string) =>
+                  Effect.gen(function* () {
+                    const line = raw.trimEnd()
+                    if (!line.trim()) return
+                    if (regex && !regex.test(line)) return
+                    if (count >= max) return
+                    count++
+                    yield* inject(monitorMessage({ jobId, command, line })).pipe(Effect.forkScoped)
+                    if (count >= max) yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.ignore)
+                  })
 
                 yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
                   Effect.gen(function* () {
@@ -140,17 +160,13 @@ export const MonitorTool = Tool.define<
                     buffer += chunk
                     const lines = buffer.split("\n")
                     buffer = lines.pop() ?? ""
-                    for (const raw of lines) {
-                      const line = raw.trimEnd()
-                      if (!line.trim()) continue
-                      if (regex && !regex.test(line)) continue
-                      if (count >= max) continue
-                      count++
-                      yield* inject(monitorMessage({ jobId, command, line })).pipe(Effect.forkScoped)
-                      if (count >= max) yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.ignore)
-                    }
+                    for (const raw of lines) yield* handleLine(raw)
                   }),
                 )
+
+                // Flush the trailing line (a final/only line with no newline,
+                // e.g. `printf ready` or a REPL prompt) before finishing.
+                if (buffer.trim()) yield* handleLine(buffer)
 
                 const code = yield* handle.exitCode
                 yield* inject(finishedMessage({ jobId, command, count }))

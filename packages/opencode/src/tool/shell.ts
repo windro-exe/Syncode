@@ -95,6 +95,10 @@ type ShellMetadata = {
   jobId?: string
 }
 
+// Max bytes a background command may append to its output file before we stop
+// appending (the process keeps running). Bounds disk use for long dev servers.
+const BACKGROUND_OUTPUT_CAP = 25 * 1024 * 1024
+
 export const log = Log.create({ service: "shell-tool" })
 
 const resolveWasm = (asset: string) => {
@@ -627,9 +631,48 @@ export const ShellTool = Tool.define(
         run: Effect.scoped(
           Effect.gen(function* () {
             const sink = createWriteStream(outputPath, { flags: "a" })
-            yield* Effect.addFinalizer(() => Effect.sync(() => sink.end()))
+            // Swallow stream errors (EPIPE/ENOSPC) so they can't crash the process.
+            sink.on("error", () => {})
+            // Await the flush on teardown so the output file is complete before
+            // the job is marked done (a reader checking on completion sees the tail).
+            yield* Effect.addFinalizer(() =>
+              Effect.promise(
+                () =>
+                  new Promise<void>((resolve) => {
+                    if (sink.destroyed || sink.closed) return resolve()
+                    let settled = false
+                    const done = () => {
+                      if (settled) return
+                      settled = true
+                      resolve()
+                    }
+                    sink.once("close", done)
+                    sink.once("error", done)
+                    sink.once("finish", done)
+                    sink.end(done)
+                  }),
+              ).pipe(Effect.catch(() => Effect.void)),
+            )
             const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
-            yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) => Effect.sync(() => sink.write(chunk)))
+            // Cap the output file so a chatty long-running process (dev server,
+            // watcher) can't fill the disk. The process keeps running; we just
+            // stop appending past the cap.
+            let written = 0
+            let capped = false
+            yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
+              Effect.sync(() => {
+                if (capped) return
+                written += Buffer.byteLength(chunk)
+                if (written > BACKGROUND_OUTPUT_CAP) {
+                  sink.write(
+                    `\n[output capped at ${Math.round(BACKGROUND_OUTPUT_CAP / 1024 / 1024)} MB — command still running]\n`,
+                  )
+                  capped = true
+                  return
+                }
+                sink.write(chunk)
+              }),
+            )
             const code = yield* handle.exitCode
             return `Command exited with code ${code}`
           }),

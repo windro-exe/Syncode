@@ -1,10 +1,23 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { _resetCache, getCustomPrompt } from "../../src/session/custom-prompts"
 
 const ENV_KEY = "OPENCODE_CUSTOM_PROMPTS"
+const FILE_KEY = "OPENCODE_CUSTOM_PROMPTS_FILE"
+
+// This suite exercises the inline-env path. custom-prompts.ts gives the FILE
+// var absolute precedence, and a real opencode launched with --custom-prompt
+// exports OPENCODE_CUSTOM_PROMPTS_FILE into the test process — which would
+// shadow the inline entries and make every lookup miss. Clear both around
+// each test to keep it hermetic regardless of how the suite is launched.
+beforeEach(() => {
+  delete process.env[FILE_KEY]
+  delete process.env[ENV_KEY]
+  _resetCache()
+})
 
 afterEach(() => {
   delete process.env[ENV_KEY]
+  delete process.env[FILE_KEY]
   _resetCache()
 })
 

@@ -64,8 +64,11 @@ export const TasksTool = Tool.define<typeof Parameters, Metadata, BackgroundJob.
                 metadata: { total: 0, running: 0 } as Metadata,
               }
             return {
-              title: `Stopped ${params.id}`,
-              output: `Background job ${params.id} is now ${stopped.status}.`,
+              title: stopped.status === "cancelled" ? `Stopped ${params.id}` : `Job ${params.id} already ${stopped.status}`,
+              output:
+                stopped.status === "cancelled"
+                  ? `Background job ${params.id} was cancelled.`
+                  : `Background job ${params.id} had already finished (${stopped.status}); nothing to stop.`,
               metadata: { total: 1, running: 0 } as Metadata,
             }
           }

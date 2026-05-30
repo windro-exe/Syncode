@@ -137,6 +137,10 @@ export const layer = Layer.effect(
     const skillActive = yield* SkillActive.Service
     const goal = yield* Goal.Service
     const autoMemory = yield* AutoMemory.Service
+    // Sessions already nudged to persist state at the 60% soft checkpoint, so
+    // the reminder fires once per session (when context first crosses 60%)
+    // rather than only on step 1.
+    const softCheckpointed = new Set<SessionID>()
     const references = yield* Reference.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
@@ -1298,6 +1302,25 @@ export const layer = Layer.effect(
               })
             }
 
+            // /btw: if the turn just answered was an ephemeral aside, prune the
+            // question and its answer so they drop from future context. Runs
+            // BEFORE the /goal block: a goal continuation would move lastUser off
+            // the aside, so the aside must be pruned on the turn that answered it.
+            // Pruned messages stay on disk, recoverable via session_recall.
+            const askedMsg = msgs.find((m) => m.info.id === lastUser.id)
+            const askedText = askedMsg?.parts.find(
+              (p): p is MessageV2.TextPart => p.type === "text" && !!p.text.trim(),
+            )?.text
+            if (askedText && Ephemeral.isEphemeralAside(askedText)) {
+              for (const m of msgs) {
+                if (m.info.id < lastUser.id) continue
+                if (m.info.pruned) continue
+                if (m.info.role !== "user" && m.info.role !== "assistant") continue
+                yield* sessions.updateMessage({ ...m.info, pruned: Date.now() })
+              }
+              yield* slog.info("btw.pruned", { messageID: lastUser.id })
+            }
+
             // /goal: before handing control back, if an active completion goal
             // is not yet met, ask the small checker model and keep working
             // instead of stopping. Bounded by max iterations; fail-safe stops.
@@ -1362,22 +1385,6 @@ export const layer = Layer.effect(
               }
             }
 
-            // /btw: if the just-answered turn was an ephemeral aside, prune the
-            // question and its answer so they drop from future context. They
-            // stay on disk and remain recoverable via session_recall.
-            const askedMsg = msgs.find((m) => m.info.id === lastUser.id)
-            const askedText = askedMsg?.parts.find(
-              (p): p is MessageV2.TextPart => p.type === "text" && !!p.text.trim(),
-            )?.text
-            if (askedText && Ephemeral.isEphemeralAside(askedText)) {
-              for (const m of msgs) {
-                if (m.info.id < lastUser.id) continue
-                if (m.info.pruned) continue
-                if (m.info.role !== "user" && m.info.role !== "assistant") continue
-                yield* sessions.updateMessage({ ...m.info, pruned: Date.now() })
-              }
-              yield* slog.info("btw.pruned", { messageID: lastUser.id })
-            }
             yield* slog.info("exiting loop")
             break
           }
@@ -1554,7 +1561,8 @@ export const layer = Layer.effect(
             // full, remind the model to persist durable state to memory before
             // the 80% eviction drops older turns. Appended to the user's own
             // text part so it rides the same message (no extra cache breakpoint).
-            if (step === 1 && softCheckpoint) {
+            if (softCheckpoint && !softCheckpointed.has(sessionID)) {
+              softCheckpointed.add(sessionID)
               const target = lastUserMsg?.parts.findLast(
                 (p) => p.type === "text" && !p.ignored && !p.synthetic && p.text.trim().length > 0,
               )
