@@ -48,6 +48,7 @@ import { SkillActive } from "../../src/skill/active"
 import { SkillRouter } from "../../src/skill/router"
 import { Memory } from "../../src/memory/memory"
 import { Goal } from "../../src/session/goal"
+import { AutoMemory } from "../../src/session/auto-memory"
 import { SystemPrompt } from "../../src/session/system"
 import { Todo } from "../../src/session/todo"
 import { SessionCompaction } from "../../src/session/compaction"
@@ -140,6 +141,7 @@ function makeHttp() {
     Memory.defaultLayer,
     SkillRouter.defaultLayer,
     Goal.defaultLayer,
+    AutoMemory.defaultLayer,
   ).pipe(Layer.provideMerge(infra))
   const question = Question.layer.pipe(Layer.provideMerge(deps))
   const todo = Todo.layer.pipe(Layer.provideMerge(deps))

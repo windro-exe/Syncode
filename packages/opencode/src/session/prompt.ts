@@ -19,6 +19,7 @@ import { SkillRouter } from "@/skill/router"
 import { SkillActive } from "@/skill/active"
 import { Goal } from "@/session/goal"
 import { Ephemeral } from "@/session/ephemeral"
+import { AutoMemory } from "@/session/auto-memory"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
@@ -135,6 +136,7 @@ export const layer = Layer.effect(
     const router = yield* SkillRouter.Service
     const skillActive = yield* SkillActive.Service
     const goal = yield* Goal.Service
+    const autoMemory = yield* AutoMemory.Service
     const references = yield* Reference.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
@@ -1453,6 +1455,14 @@ export const layer = Layer.effect(
               // snapshot so the request built below sees evicted-turn
               // placeholders instead of full content.
               msgs = yield* MessageV2.filterCompactedEffect(sessionID)
+              // Auto-memory: distill durable facts out of the just-evicted turns
+              // and persist them to session memory before they age out. Runs
+              // fire-and-forget off the response path; never blocks the turn.
+              const autoAgent = yield* agents.get(lastUser.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+              if (autoAgent)
+                yield* autoMemory
+                  .extract({ sessionID, messages: msgs, agent: autoAgent, user: lastUser, fallbackModel: model })
+                  .pipe(Effect.ignore, Effect.forkIn(scope))
             }
           }
 
@@ -1852,6 +1862,7 @@ export const defaultLayer = Layer.suspend(() =>
         SkillRouter.defaultLayer,
         SkillActive.defaultLayer,
         Goal.defaultLayer,
+        AutoMemory.defaultLayer,
       ),
     ),
   ),
