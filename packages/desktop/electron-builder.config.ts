@@ -108,7 +108,9 @@ function getConfig() {
         appId: "ai.opencode.desktop",
         productName: "OpenCode",
         protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
+        // wnxd fork: no `publish` feed — local fork must never auto-update from
+        // upstream anomalyco releases (would wipe local features). Updater is
+        // also hard-disabled in src/main/constants.ts.
         rpm: { packageName: "opencode" },
       }
     }
