@@ -28,6 +28,20 @@ echo "Downloading $ASSET (latest release) ..."
 curl -fL "${auth[@]}" "https://github.com/$REPO/releases/latest/download/$ASSET" -o "$DEST/opencode"
 chmod +x "$DEST/opencode"
 
-echo "Installed -> $DEST/opencode"
-"$DEST/opencode" --version || true
+# macOS: the binary is unsigned, so clear the Gatekeeper quarantine flag or the
+# first run is blocked ("cannot be opened" / "killed: 9").
+if [ "$(uname -s)" = "Darwin" ]; then
+  xattr -dr com.apple.quarantine "$DEST/opencode" 2>/dev/null || true
+fi
+
+# Verify it actually runs — do NOT pretend success if it doesn't.
+if "$DEST/opencode" --version >/dev/null 2>&1; then
+  echo "Installed -> $DEST/opencode ($("$DEST/opencode" --version 2>/dev/null | head -1))"
+else
+  echo "WARNING: downloaded to $DEST/opencode but it failed to run on this system."
+  [ "$(uname -s)" = "Darwin" ] && echo "  macOS: try  xattr -dr com.apple.quarantine \"$DEST/opencode\""
+  echo "  (Report the OS/arch so the binary can be checked.)"
+  exit 1
+fi
+
 case ":$PATH:" in *":$DEST:"*) ;; *) echo "NOTE: add $DEST to your PATH (e.g. echo 'export PATH=\"$DEST:\$PATH\"' >> ~/.bashrc)";; esac
