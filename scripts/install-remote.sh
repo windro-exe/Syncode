@@ -44,4 +44,15 @@ else
   exit 1
 fi
 
-case ":$PATH:" in *":$DEST:"*) ;; *) echo "NOTE: add $DEST to your PATH (e.g. echo 'export PATH=\"$DEST:\$PATH\"' >> ~/.bashrc)";; esac
+# Auto-add to PATH so `opencode` works immediately and on future shells
+case ":$PATH:" in *":$DEST:"*) ;;
+  *)
+    export PATH="$DEST:$PATH"
+    case "${SHELL##*/}" in
+      zsh)  rc="$HOME/.zshrc"; echo "export PATH=\"$DEST:\$PATH\"" >> "$rc" ;;
+      fish) rc="$HOME/.config/fish/config.fish"; echo "set -gx PATH $DEST \$PATH" >> "$rc" ;;
+      *)    rc="$HOME/.bashrc"; echo "export PATH=\"$DEST:\$PATH\"" >> "$rc" ;;
+    esac
+    echo "Added $DEST to PATH in $rc — run: source $rc"
+    ;;
+esac

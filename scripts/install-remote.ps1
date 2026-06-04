@@ -24,4 +24,12 @@ Invoke-WebRequest -Headers $headers -Uri "https://github.com/$repo/releases/late
 
 Write-Host "Installed -> $out"
 & $out --version
-if (($env:PATH -split ';') -notcontains $dest) { Write-Host "NOTE: add $dest to your PATH" }
+
+# Auto-add to user PATH so `opencode` works from any terminal
+$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($userPath -split ';' -notcontains $dest) {
+  $newPath = if ($userPath) { "$dest;$userPath" } else { $dest }
+  [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+  $env:PATH = "$dest;$env:PATH"
+  Write-Host "Added $dest to user PATH — restart your terminal or run:  refreshenv"
+}
