@@ -1,0 +1,4 @@
+# Shell scripts must be LF so `curl ... | bash` works on macOS/Linux even when the
+# repo is checked out on Windows (core.autocrlf=true would otherwise store CRLF and
+# break the shebang). Keep this repo-wide for all shell scripts.
+*.sh text eol=lf
