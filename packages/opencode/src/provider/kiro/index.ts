@@ -242,7 +242,7 @@ function textOf(parts: AnyPart[]): string {
 
 // Extract assistant reasoning parts → AWS Q reasoningContent shape so thinking
 // round-trips across turns (mirrors kiro-proxy q-client.js extractReasoning).
-function reasoningOf(parts: AnyPart[]): { reasoningText: { text: string; signature?: string } } | undefined {
+function reasoningOf(parts: AnyPart[]): { reasoningText: { text: string; signature: string } } | undefined {
   const blocks = parts.filter((p) => p.type === "reasoning" && typeof p.text === "string" && p.text.length > 0)
   if (blocks.length === 0) return undefined
   const text = blocks.map((p) => p.text).join("")
@@ -251,7 +251,12 @@ function reasoningOf(parts: AnyPart[]): { reasoningText: { text: string; signatu
   const sig = blocks
     .map((p) => p.providerOptions?.kiro?.signature ?? p.providerMetadata?.kiro?.signature)
     .find((s) => typeof s === "string" && s.length > 0)
-  return { reasoningText: { text, ...(sig ? { signature: sig } : {}) } }
+  // Bedrock requires a signature on every replayed thinking block. An unsigned
+  // reasoning block (e.g. from an interrupted turn) is rejected with
+  // "thinking.signature: Field required" / THINKING_SIGNATURE_INVALID, so drop
+  // it entirely rather than send it without a signature.
+  if (!sig) return undefined
+  return { reasoningText: { text, signature: sig } }
 }
 
 function toolResultOutput(result: any): string {
