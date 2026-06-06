@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Syncode release publisher — builds the CLI for all shipped targets, gzips them,
+# Syncode release publisher - builds the CLI for all shipped targets, gzips them,
 # and force-pushes them plus a version.json manifest to the `dist` branch of the
 # Syncode repo. The remote updater (scripts/update-remote.{sh,ps1}) reads from there.
 #
@@ -26,10 +26,33 @@ command -v gzip >/dev/null 2>&1 || { echo "gzip is required"; exit 1; }
 PUSH_URL="$(git -C "$ROOT" remote get-url syncode 2>/dev/null || echo "https://github.com/windro-xdd/Syncode.git")"
 DIST_BRANCH="${SYNCODE_DIST_BRANCH:-dist}"
 
-echo "==> Building Syncode CLI $VERSION (all targets; this takes a few minutes)"
-( cd "$ROOT/packages/opencode" && bun install && OPENCODE_VERSION="$VERSION" bun run build )
+# Safety: this force-pushes an orphan binary branch. Never let it target a real
+# source branch, or it would destroy that branch's history.
+case "$DIST_BRANCH" in
+  wnxd|dev|main|master|HEAD) echo "refusing to publish binaries to source branch '$DIST_BRANCH'"; exit 1 ;;
+esac
 
 DIST="$ROOT/packages/opencode/dist"
+echo "==> Building Syncode CLI $VERSION (all targets; this takes a few minutes)"
+rm -rf "$DIST"   # never ship a stale binary left over from a previous build
+( cd "$ROOT/packages/opencode" && bun install && OPENCODE_VERSION="$VERSION" bun run build )
+
+# The updater compares each binary's baked --version against version.json, so the
+# build MUST report exactly $VERSION or clients would re-download on every run.
+case "$(uname -s)-$(uname -m)" in
+  *NT*|MINGW*|MSYS*|CYGWIN*)  probe="$DIST/opencode-windows-x64/bin/opencode.exe" ;;
+  Linux-x86_64)               probe="$DIST/opencode-linux-x64/bin/opencode" ;;
+  Linux-aarch64|Linux-arm64)  probe="$DIST/opencode-linux-arm64/bin/opencode" ;;
+  Darwin-arm64)               probe="$DIST/opencode-darwin-arm64/bin/opencode" ;;
+  Darwin-x86_64)              probe="$DIST/opencode-darwin-x64/bin/opencode" ;;
+  *)                          probe="" ;;
+esac
+if [ -n "$probe" ] && [ -x "$probe" ]; then
+  built="$("$probe" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[-.A-Za-z0-9]*' | head -1 || true)"
+  if [ -n "$built" ] && [ "$built" != "$VERSION" ]; then
+    echo "built binary reports '$built' but expected '$VERSION'; aborting"; exit 1
+  fi
+fi
 STAGE="$(mktemp -d)"
 cleanup() { rm -rf "$STAGE"; }
 trap cleanup EXIT
@@ -40,7 +63,7 @@ emit() {
   [ -f "$bin" ] || bin="$DIST/$1/bin/opencode.exe"
   if [ ! -f "$bin" ]; then echo "  ! missing $1 (skipped)"; return; fi
   gzip -c "$bin" > "$STAGE/$out"
-  echo "  + $out ($(( $(stat -c%s "$STAGE/$out") / 1048576 ))MB)"
+  echo "  + $out ($(( $(wc -c < "$STAGE/$out") / 1048576 ))MB)"
 }
 
 echo "==> Gzipping shipped targets"
@@ -68,9 +91,13 @@ echo "==> Publishing to $DIST_BRANCH on $PUSH_URL"
   git init -q
   git checkout -q -b "$DIST_BRANCH"
   git add -A
-  git -c user.name="syncode-publisher" -c user.email="syncode@windro-xdd.users.noreply.github.com" \
-      commit -q -m "dist: $VERSION (prebuilt, gzipped, all OS)"
-  git push -f "$PUSH_URL" "$DIST_BRANCH"
+  # Disable GPG signing and any global hooks for this throwaway repo so a contributor's
+  # global commit.gpgsign / core.hooksPath can't block the publish. Credentials still
+  # come from global config so the push can authenticate.
+  git -c commit.gpgsign=false -c user.name="syncode-publisher" \
+      -c user.email="syncode@windro-xdd.users.noreply.github.com" \
+      commit -q --no-verify -m "dist: $VERSION (prebuilt, gzipped, all OS)"
+  git push -f --no-verify "$PUSH_URL" "$DIST_BRANCH"
 )
 
 echo "==> Done. Users update with:"
