@@ -106,6 +106,48 @@ export const Provider = Schema.Struct({
 
 export type Provider = Schema.Schema.Type<typeof Provider>
 
+// ---------------------------------------------------------------------------
+// Built-in providers (Syncode)
+//
+// Providers shipped in-source so they appear in /connect and resolve with zero
+// opencode.json config. Kiro talks directly to AWS Q via the vendored provider
+// SDK (packages/opencode/src/provider/kiro, npm key "kiro"); the user only pastes
+// a `ksk_` key via /connect. Built-ins are merged into every get() result and win
+// over any same-id upstream entry so the vendored SDK binding stays authoritative.
+// ---------------------------------------------------------------------------
+
+function kiroModel(id: string, name: string, release_date: string, context: number, output: number): Model {
+  return {
+    id,
+    name,
+    release_date,
+    attachment: true,
+    reasoning: true,
+    temperature: true,
+    tool_call: true,
+    limit: { context, output },
+    modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+  }
+}
+
+export const BUILTIN_PROVIDERS: Record<string, Provider> = {
+  kiro: {
+    id: "kiro",
+    name: "Kiro",
+    npm: "kiro",
+    env: ["KIRO_API_KEY"],
+    models: {
+      // Context/output limits per official Kiro docs (kiro.dev/docs/models).
+      "claude-opus-4.8": kiroModel("claude-opus-4.8", "Claude Opus 4.8", "2026-01-01", 1_000_000, 128_000),
+      "claude-opus-4.7": kiroModel("claude-opus-4.7", "Claude Opus 4.7", "2025-11-01", 1_000_000, 128_000),
+      "claude-opus-4.6": kiroModel("claude-opus-4.6", "Claude Opus 4.6", "2025-09-01", 1_000_000, 128_000),
+      "claude-opus-4.5": kiroModel("claude-opus-4.5", "Claude Opus 4.5", "2025-07-01", 200_000, 64_000),
+      "claude-sonnet-4.6": kiroModel("claude-sonnet-4.6", "Claude Sonnet 4.6", "2025-11-01", 1_000_000, 64_000),
+      "claude-sonnet-4.5": kiroModel("claude-sonnet-4.5", "Claude Sonnet 4.5", "2025-07-01", 200_000, 64_000),
+    },
+  },
+}
+
 export const Event = {
   Refreshed: EventV2.define({
     type: "models-dev.refreshed",
@@ -194,7 +236,8 @@ export const layer = Layer.effect(
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)
 
-    const get = (): Effect.Effect<Record<string, Provider>> => cachedGet
+    const get = (): Effect.Effect<Record<string, Provider>> =>
+      cachedGet.pipe(Effect.map((all) => ({ ...all, ...BUILTIN_PROVIDERS })))
 
     const refresh = Effect.fn("ModelsDev.refresh")(function* (force = false) {
       if (!force && (yield* fresh())) return

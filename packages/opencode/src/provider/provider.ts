@@ -122,6 +122,9 @@ const BUNDLED_PROVIDERS: Record<string, () => Promise<(opts: any) => BundledSDK>
   "@ai-sdk/github-copilot": () =>
     import("@opencode-ai/core/github-copilot/copilot-provider").then((m) => m.createOpenaiCompatible),
   "venice-ai-sdk-provider": () => import("venice-ai-sdk-provider").then((m) => m.createVenice),
+  // Built-in Kiro provider (vendored, talks directly to AWS Q — no proxy).
+  // Catalog entry is seeded in core ModelsDev.get(); here we just bundle the SDK.
+  kiro: () => import("./kiro").then((m) => m.createKiro),
 }
 
 type CustomModelLoader = (sdk: any, modelID: string, options?: Record<string, any>) => Promise<any>
@@ -1244,8 +1247,13 @@ export const layer = Layer.effect(
         // load plugins first so config() hook runs before reading cfg.provider
         const plugins = yield* plugin.list()
 
-        // now read config providers - includes any modifications from plugin config() hook
-        const configProviders = Object.entries(cfg.provider ?? {})
+        // now read config providers - includes any modifications from plugin config() hook.
+        // Built-in providers (e.g. kiro) are authoritative: a same-id config block must NOT
+        // be able to redirect their transport (npm/baseURL) — otherwise a lingering proxy
+        // block would silently override the bundled direct-to-AWS-Q Kiro provider.
+        const configProviders = Object.entries(cfg.provider ?? {}).filter(
+          ([id]) => !(id in ModelsDev.BUILTIN_PROVIDERS),
+        )
         const disabled = new Set(cfg.disabled_providers ?? [])
         const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
 

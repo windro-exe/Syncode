@@ -44,6 +44,8 @@ function sdkKey(npm: string): string | undefined {
       return "vertex"
     case "@ai-sdk/google":
       return "google"
+    case "kiro":
+      return "kiro"
     case "@ai-sdk/gateway":
       return "gateway"
     case "@openrouter/ai-sdk-provider":
@@ -597,7 +599,7 @@ function openaiCompatibleReasoningEfforts(id: string) {
 }
 
 function anthropicAdaptiveEfforts(apiId: string): string[] | null {
-  if (["opus-4-7", "opus-4.7"].some((v) => apiId.includes(v))) {
+  if (["opus-4-8", "opus-4.8", "opus-4-7", "opus-4.7"].some((v) => apiId.includes(v))) {
     return ["low", "medium", "high", "xhigh", "max"]
   }
   if (["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"].some((v) => apiId.includes(v))) {
@@ -813,6 +815,15 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
         ]),
       )
     }
+
+    case "kiro":
+      // Built-in Kiro provider: effort lands under providerOptions.kiro.effort and is
+      // injected into the AWS Q request as output_config.effort. Reasoning streams
+      // automatically (no thinking flag needed), so the variant only carries effort.
+      if (adaptiveEfforts) {
+        return Object.fromEntries(adaptiveEfforts.map((effort) => [effort, { effort }]))
+      }
+      return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { effort }]))
 
     case "@ai-sdk/anthropic":
     // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic
