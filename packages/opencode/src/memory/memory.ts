@@ -14,6 +14,18 @@ const MEMORY_ROOT = "/memories"
 const MAX_CONTENT_BYTES = 64 * 1024
 const MAX_VIEW_LINES = 4_000
 
+// Forgetting (Phase 3): only genuinely-dead entries are ever evicted — old,
+// never-retrieved, low-importance, unpinned, non-procedural, and never a
+// structural seed file. Conservative on purpose; hard delete is irreversible.
+const FORGET_MIN_AGE_DAYS = 30
+const FORGET_IMPORTANCE_MAX = 8
+const PROTECTED_PATHS = new Set([
+  "/memories/agent.md",
+  "/memories/system.md",
+  "/memories/_plan.md",
+  "/memories/evicted-context.md",
+])
+
 // Stable hash of an entry's content, for exact-duplicate detection (Phase 1).
 export function hashContent(content: string): string {
   return createHash("sha256").update(content.trim()).digest("hex")
@@ -146,6 +158,12 @@ export interface Interface {
     path: string
     ctx: ScopeContext
   }) => Effect.Effect<void, MemoryError>
+  readonly forget: (input: {
+    scope: MemoryScope
+    ctx: ScopeContext
+    minAgeDays?: number
+    now?: number
+  }) => Effect.Effect<number>
 }
 
 export interface ListEntry {
@@ -601,6 +619,37 @@ export const layer = Layer.effect(
       )
     })
 
+    // Real forgetting: hard-delete only genuinely-dead entries. Strong rails —
+    // never pinned, never procedural, importance must be low, reinforcement must
+    // be exactly zero (never genuinely retrieved), must be older than minAge, and
+    // never a protected structural file. Returns how many were evicted.
+    const forget: Interface["forget"] = Effect.fn("Memory.forget")(function* (input) {
+      const sessionID = input.ctx.sessionID
+      const now = input.now ?? Date.now()
+      const minAge = (input.minAgeDays ?? FORGET_MIN_AGE_DAYS) * 86_400_000
+      const rows = yield* tryDb(() =>
+        Database.use((db) => db.select().from(MemoryEntryTable).where(scopePred(input.scope, sessionID)).all()),
+      ).pipe(Effect.orElseSucceed(() => [] as Array<typeof MemoryEntryTable.$inferSelect>))
+      const victims = rows.filter(
+        (r) =>
+          !r.pinned &&
+          r.kind !== "procedural" &&
+          r.importance < FORGET_IMPORTANCE_MAX &&
+          r.reinforcement === 0 &&
+          now - (r.last_reinforced || r.time_created) > minAge &&
+          !PROTECTED_PATHS.has(r.path),
+      )
+      if (victims.length === 0) return 0
+      yield* tryDb(() =>
+        Database.transaction((db) => {
+          for (const v of victims) db.delete(MemoryEntryTable).where(eq(MemoryEntryTable.id, v.id)).run()
+        }),
+      ).pipe(Effect.orElseSucceed(() => undefined))
+      for (const v of victims)
+        yield* bus.publish(Event.Deleted, { scope: v.scope, sessionID: v.session_id ?? undefined, path: v.path })
+      return victims.length
+    })
+
     return Service.of({
       create,
       view,
@@ -612,6 +661,7 @@ export const layer = Layer.effect(
       recall,
       index,
       touch,
+      forget,
     })
   }),
 )

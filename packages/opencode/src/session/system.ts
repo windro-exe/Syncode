@@ -44,6 +44,9 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
 
+// Run the opt-in memory sweep at most once per process.
+let sweptThisProcess = false
+
 // Escape values interpolated into XML-ish attributes the model parses.
 // Strips the structural characters rather than HTML-encoding them — the
 // model doesn't unescape entities, and we only ever interpolate short
@@ -118,6 +121,14 @@ export const layer = Layer.effect(
       memory: Effect.fn("SystemPrompt.memory")(function* (sessionID: SessionID) {
         yield* ensureGlobalSeeds(memorySvc).pipe(Effect.ignore)
         yield* ensureSessionSeeds(memorySvc, sessionID).pipe(Effect.ignore)
+        // Opt-in real forgetting: once per process, evict genuinely-dead global
+        // memories (old, never-retrieved, low-importance, unpinned). OFF by
+        // default — auto-deleting memory is destructive — enable with
+        // OPENCODE_MEMORY_FORGET=1.
+        if (!sweptThisProcess && process.env["OPENCODE_MEMORY_FORGET"] === "1") {
+          sweptThisProcess = true
+          yield* memorySvc.forget({ scope: "global", ctx: {} }).pipe(Effect.ignore)
+        }
         const idx = yield* memorySvc.index({ ctx: { sessionID } })
         const fmt = (label: string, list: typeof idx.global) => {
           if (list.length === 0) return `  ${label}: (empty)`
