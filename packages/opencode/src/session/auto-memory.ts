@@ -62,6 +62,22 @@ function renderForExtraction(messages: MessageV2.WithParts[]): string {
 const promptFor = (source: string) =>
   ["Conversation excerpt being evicted:", "", source.slice(-SOURCE_CAP), "", "Extract the durable facts now."].join("\n")
 
+// Drop facts already recorded in the note (and duplicates within the new batch),
+// compared on normalized bullet text. Prevents the same fact restated across
+// successive evictions from accreting as N near-identical bullets.
+function dedupeFacts(existing: string, facts: string): string {
+  const norm = (s: string) => s.replace(/^[-*\d.)\s]+/, "").trim().toLowerCase()
+  const have = new Set(existing.split(/\r?\n/).map(norm).filter(Boolean))
+  const kept: string[] = []
+  for (const line of facts.split(/\r?\n/)) {
+    const n = norm(line)
+    if (!n || have.has(n)) continue
+    have.add(n)
+    kept.push(line)
+  }
+  return kept.join("\n")
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -174,9 +190,22 @@ export const layer = Layer.effect(
         log.info("auto-memory: nothing worth keeping", { messages: targets.length })
         return
       }
+      // Drop facts already recorded in the note so the same fact restated across
+      // evictions doesn't accrete as duplicates.
+      const existingNote = yield* memory
+        .view({ scope: "session", path: NOTE_PATH, ctx: { sessionID: input.sessionID } })
+        .pipe(Effect.option)
+      const existingText =
+        existingNote._tag === "Some" && existingNote.value.entry ? existingNote.value.entry.content : ""
+      const newFacts = dedupeFacts(existingText, facts)
+      if (!newFacts.trim()) {
+        for (const id of ids) seen.add(id)
+        log.info("auto-memory: all facts already known", { messages: targets.length })
+        return
+      }
       // Persist first; mark the turns handled only once the write actually
       // succeeds, so a failed append is retried rather than silently dropped.
-      const appended = yield* appendNote(input.sessionID, facts, ids).pipe(
+      const appended = yield* appendNote(input.sessionID, newFacts, ids).pipe(
         Effect.map(() => true),
         Effect.catchCause((cause) =>
           Effect.sync(() => {
@@ -187,7 +216,7 @@ export const layer = Layer.effect(
       )
       if (!appended) return
       for (const id of ids) seen.add(id)
-      log.info("auto-memory: appended", { messages: targets.length, chars: facts.length })
+      log.info("auto-memory: appended", { messages: targets.length, chars: newFacts.length })
     })
 
     return Service.of({ extract })

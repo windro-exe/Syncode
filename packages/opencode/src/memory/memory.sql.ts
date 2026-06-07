@@ -21,6 +21,15 @@ export const MemoryEntryTable = sqliteTable(
     pinned: integer({ mode: "boolean" }).notNull().default(false),
     access_count: integer().notNull().default(0),
     time_accessed: integer().notNull(),
+    // Phase 1 (salience): importance is rated once at encode (1-10, not gameable);
+    // reinforcement is a decayed "this was genuinely useful" signal bumped only on
+    // real retrieval; last_reinforced anchors its decay. content_hash enables
+    // exact-duplicate detection. kind classifies the memory.
+    importance: integer().notNull().default(5),
+    reinforcement: integer().notNull().default(0),
+    last_reinforced: integer().notNull().default(0),
+    content_hash: text(),
+    kind: text().$type<"episodic" | "semantic" | "procedural">().notNull().default(sql`'semantic'`),
     ...Timestamps,
   },
   (table) => [

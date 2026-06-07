@@ -141,6 +141,35 @@ describe("session.auto-memory", () => {
     }),
   )
 
+  it.instance("does not re-append a fact already recorded in the note", () =>
+    Effect.gen(function* () {
+      const auto = yield* AutoMemory.Service
+      const sid = (yield* (yield* SessionNs.Service).create({})).id
+      llmOutput = "- shared fact about auth\n- first unique detail"
+      yield* auto.extract({
+        sessionID: sid,
+        messages: [prunedMsg(sid, "assistant", "work A")],
+        agent: fakeAgent,
+        user: fakeUser,
+        fallbackModel: fakeModel,
+      })
+      // A later, different turn restates the same fact plus a new one.
+      llmOutput = "- shared fact about auth\n- second unique detail"
+      yield* auto.extract({
+        sessionID: sid,
+        messages: [prunedMsg(sid, "assistant", "work B")],
+        agent: fakeAgent,
+        user: fakeUser,
+        fallbackModel: fakeModel,
+      })
+      const note = yield* readNote(sid)
+      expect(note).toContain("first unique detail")
+      expect(note).toContain("second unique detail")
+      // The shared fact must appear exactly once, not duplicated per eviction.
+      expect((note!.match(/shared fact about auth/g) || []).length).toBe(1)
+    }),
+  )
+
   it.instance("writes nothing when the extractor returns NONE", () =>
     Effect.gen(function* () {
       llmOutput = "NONE"

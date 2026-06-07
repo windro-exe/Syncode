@@ -8,10 +8,16 @@ import { score, normalizeBm25 } from "./scoring"
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm"
 import { Context, Effect, Layer, Schema } from "effect"
 import path from "path"
+import { createHash } from "node:crypto"
 
 const MEMORY_ROOT = "/memories"
 const MAX_CONTENT_BYTES = 64 * 1024
 const MAX_VIEW_LINES = 4_000
+
+// Stable hash of an entry's content, for exact-duplicate detection (Phase 1).
+export function hashContent(content: string): string {
+  return createHash("sha256").update(content.trim()).digest("hex")
+}
 
 export const Scope = Schema.Literals(["global", "session"]).annotate({ identifier: "MemoryScope" })
 
@@ -26,6 +32,11 @@ export const Entry = Schema.Struct({
   pinned: Schema.Boolean,
   accessCount: Schema.Number,
   timeAccessed: Schema.Number,
+  importance: Schema.Number,
+  reinforcement: Schema.Number,
+  lastReinforced: Schema.Number,
+  contentHash: Schema.optional(Schema.String),
+  kind: Schema.String,
   timeCreated: Schema.Number,
   timeUpdated: Schema.Number,
 }).annotate({ identifier: "MemoryEntry" })
@@ -169,6 +180,11 @@ function row2entry(row: typeof MemoryEntryTable.$inferSelect): Entry {
     pinned: !!row.pinned,
     accessCount: row.access_count,
     timeAccessed: row.time_accessed,
+    importance: row.importance,
+    reinforcement: row.reinforcement,
+    lastReinforced: row.last_reinforced,
+    contentHash: row.content_hash ?? undefined,
+    kind: row.kind,
     timeCreated: row.time_created,
     timeUpdated: row.time_updated,
   }
@@ -254,6 +270,8 @@ export const layer = Layer.effect(
               pinned: false,
               access_count: 0,
               time_accessed: now,
+              content_hash: hashContent(input.content),
+              last_reinforced: now,
               time_created: now,
               time_updated: now,
             })
@@ -326,7 +344,7 @@ export const layer = Layer.effect(
       yield* tryDb(() =>
         Database.transaction((db) => {
           db.update(MemoryEntryTable)
-            .set({ content: next, time_updated: Date.now(), time_accessed: Date.now() })
+            .set({ content: next, content_hash: hashContent(next), time_updated: Date.now(), time_accessed: Date.now() })
             .where(eq(MemoryEntryTable.id, existing!.id))
             .run()
         }),
@@ -476,8 +494,9 @@ export const layer = Layer.effect(
           const entry = row2entry(row)
           const s = score({
             bm25: row.bm25,
-            accessedAt: entry.timeAccessed,
-            accessCount: entry.accessCount,
+            reinforcedAt: entry.lastReinforced || entry.timeCreated,
+            reinforcement: entry.reinforcement,
+            importance: entry.importance,
             now,
           })
           return {
@@ -488,6 +507,22 @@ export const layer = Layer.effect(
         })
         .sort((a, b) => b.score - a.score)
         .slice(0, limit)
+      // Reinforcement: a genuine retrieval (an entry actually returned to the
+      // caller) strengthens the memory. This is the ONLY place reinforcement
+      // grows — plain views never do, which keeps the signal non-gameable.
+      if (ranked.length > 0) {
+        const ids = ranked.map((r) => r.entry.id)
+        yield* tryDb(() =>
+          Database.transaction((db) => {
+            for (const id of ids) {
+              db.update(MemoryEntryTable)
+                .set({ reinforcement: sql`${MemoryEntryTable.reinforcement} + 1`, last_reinforced: now })
+                .where(eq(MemoryEntryTable.id, id))
+                .run()
+            }
+          }),
+        ).pipe(Effect.orElseSucceed(() => undefined))
+      }
       return ranked
     })
 
