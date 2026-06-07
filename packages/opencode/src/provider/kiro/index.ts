@@ -240,6 +240,88 @@ function textOf(parts: AnyPart[]): string {
     .join("\n")
 }
 
+// AWS Q `UserInputMessage` accepts `images: ImageBlock[]` and `documents:
+// DocumentBlock[]` natively (smithy schema in @aws/codewhisperer-streaming-client;
+// kiro-proxy and kiro-acp both use them). Both blocks shape as
+// `{ format, source: { bytes: <base64-string> } }`. We hand-roll JSON over HTTP,
+// so bytes must be a base64 STRING (smithy AWS_JSON_1_0 wire encoding for blobs).
+const IMAGE_FORMAT: Record<string, "png" | "jpeg" | "gif" | "webp"> = {
+  "image/png": "png",
+  "image/jpeg": "jpeg",
+  "image/jpg": "jpeg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+}
+const DOC_FORMAT: Record<string, "csv" | "doc" | "docx" | "html" | "md" | "pdf" | "txt" | "xls" | "xlsx"> = {
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "text/html": "html",
+  "text/csv": "csv",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+}
+
+function fileBytesBase64(data: unknown): string | undefined {
+  // The AI SDK delivers a v3 file part's `data` as Uint8Array | string | URL.
+  // For data: URLs the SDK already strips the prefix and hands us the base64
+  // payload as a string; for Uint8Array we encode here. URLs are not inlined
+  // upstream for Kiro yet, so we skip them rather than firing a network fetch.
+  if (data instanceof Uint8Array) return Buffer.from(data).toString("base64")
+  if (typeof data === "string") {
+    const m = data.match(/^data:[^;]+;base64,(.+)$/)
+    return m ? m[1] : data
+  }
+  return undefined
+}
+
+interface KiroAttachments {
+  content: string
+  images: { format: string; source: { bytes: string } }[]
+  documents: { name: string; format: string; source: { bytes: string } }[]
+}
+
+function partsToContent(parts: AnyPart[]): KiroAttachments {
+  const text: string[] = []
+  const images: KiroAttachments["images"] = []
+  const documents: KiroAttachments["documents"] = []
+  for (const p of parts) {
+    if (p.type === "text") {
+      if (typeof p.text === "string") text.push(p.text)
+      continue
+    }
+    if (p.type !== "file") continue
+    const mt = String(p.mediaType ?? "").toLowerCase()
+    const bytes = fileBytesBase64(p.data)
+    if (!bytes) {
+      text.push(`[unsupported attachment: ${mt || "unknown source"}]`)
+      continue
+    }
+    const ifmt = IMAGE_FORMAT[mt]
+    if (ifmt) {
+      images.push({ format: ifmt, source: { bytes } })
+      continue
+    }
+    const dfmt = DOC_FORMAT[mt]
+    if (dfmt) {
+      const rawName = typeof p.filename === "string" ? p.filename : "document"
+      const name = rawName.replace(/\.[^.]+$/, "").slice(0, 64) || "document"
+      documents.push({ name, format: dfmt, source: { bytes } })
+      continue
+    }
+    text.push(`[unsupported attachment: ${mt || "unknown"}]`)
+  }
+  return { content: text.join("\n"), images, documents }
+}
+
+function attachAttachments(message: any, atts: KiroAttachments) {
+  if (atts.images.length) message.images = atts.images
+  if (atts.documents.length) message.documents = atts.documents
+  return message
+}
+
 // Extract assistant reasoning parts → AWS Q reasoningContent shape so thinking
 // round-trips across turns (mirrors kiro-proxy q-client.js extractReasoning).
 function reasoningOf(parts: AnyPart[]): { reasoningText: { text: string; signature: string } } | undefined {
@@ -289,8 +371,17 @@ function buildHistory(prompt: AnyMessage[], model: string): any[] {
     .filter((m) => m.role !== "system")
     .flatMap((msg): any[] => {
       switch (msg.role) {
-        case "user":
-          return [{ userInputMessage: { content: textOf(msg.content), modelId: model, origin: "AI_EDITOR" } }]
+        case "user": {
+          const u = partsToContent(msg.content)
+          return [
+            {
+              userInputMessage: attachAttachments(
+                { content: u.content || " ", modelId: model, origin: "AI_EDITOR" },
+                u,
+              ),
+            },
+          ]
+        }
         case "assistant": {
           const content = textOf(msg.content.filter((p: AnyPart) => p.type === "text"))
           const calls = msg.content.filter((p: AnyPart) => p.type === "tool-call")
@@ -374,7 +465,10 @@ function translate(input: {
     : []
   const hist = has ? rest.slice(0, rest.length - trailing) : rest.slice(0, -1)
   const last = has ? undefined : rest.findLast((m) => m.role === "user")
-  const content = last ? textOf(last.content) : " "
+  const lastAtts: KiroAttachments = last
+    ? partsToContent(last.content)
+    : { content: "", images: [], documents: [] }
+  const content = last ? lastAtts.content : " "
   const prefix = system.map((m) => m.content).join("\n")
   const current = hist.length === 0 && prefix ? prefix + "\n" + content : content
   const ctx: any = {}
@@ -384,7 +478,10 @@ function translate(input: {
   return {
     conversationId: input.conversationId ?? crypto.randomUUID(),
     currentMessage: {
-      userInputMessage: { content: current, modelId: input.modelId, origin: "AI_EDITOR", userInputMessageContext },
+      userInputMessage: attachAttachments(
+        { content: current || " ", modelId: input.modelId, origin: "AI_EDITOR", userInputMessageContext },
+        lastAtts,
+      ),
     },
     history: buildHistory([...system, ...hist], input.modelId),
     chatTriggerType: "MANUAL",
