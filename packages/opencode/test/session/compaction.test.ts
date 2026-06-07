@@ -654,7 +654,7 @@ describe("session.compaction.prune", () => {
             state: {
               status: "completed",
               input: {},
-              output: "x".repeat(200_000),
+              output: "the quick brown fox jumps over the lazy dog\n".repeat(20_000),
               title: "done",
               metadata: {},
               time: { start: Date.now(), end: Date.now() },

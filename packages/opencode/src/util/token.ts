@@ -1,4 +1,7 @@
 import { Effect } from "effect"
+import * as Log from "@opencode-ai/core/util/log"
+
+const log = Log.create({ service: "util.token" })
 
 const CHARS_PER_TOKEN = 4
 
@@ -23,7 +26,16 @@ export const count = (input: string) =>
     if (encoder === undefined) {
       encoder = yield* Effect.promise(() => import("gpt-tokenizer")).pipe(
         Effect.map((m) => m.encode as (s: string) => unknown[]),
-        Effect.orElseSucceed(() => null),
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            // One-shot warn so a bundling/dynamic-import failure is visible
+            // instead of silently degrading every prune to len/4 forever.
+            log.warn("gpt-tokenizer import failed; falling back to char/4 estimator", {
+              cause: String(cause).slice(0, 200),
+            })
+            return null as ((s: string) => unknown[]) | null
+          }),
+        ),
       )
     }
     if (!encoder) return estimate(input)

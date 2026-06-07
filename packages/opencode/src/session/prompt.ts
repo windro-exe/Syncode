@@ -88,6 +88,35 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
 
+// Approximate per-attachment token cost for the overflow trigger. We can't
+// know exact vision-token-pricing without reading the bytes, but Anthropic and
+// Bedrock both charge roughly 1500-2000 tokens per image at standard res, and
+// PDFs map to a similar floor. Used only for the projected-size estimate, not
+// for billing — conservative so we err on cut-sooner.
+const APPROX_TOKENS_PER_ATTACHMENT = 1_500
+function approxAttachmentTokens(parts: ReadonlyArray<MessageV2.Part>): number {
+  let n = 0
+  for (const p of parts) {
+    if (p.type === "file" && typeof p.mime === "string") {
+      const mt = p.mime.toLowerCase()
+      if (mt.startsWith("image/") || mt.startsWith("application/") || mt.startsWith("text/")) {
+        n += APPROX_TOKENS_PER_ATTACHMENT
+      }
+    }
+  }
+  return n
+}
+
+// Headroom for everything the prune trigger doesn't directly count:
+// - the rebuilt system block (memory index + agent.md + _plan.md inlined +
+//   active skill TOC/rules + env + persona; 5-15K typical with growth)
+// - post-trigger injections (auto-recall ≤2K, soft-checkpoint reminder ~150,
+//   per-step reminder wraps ~50)
+// Conservative on purpose. Combined with the F2 fix (reserved buffer = max of
+// COMPACTION_BUFFER and maxOutput), this closes the cumulative blind spot the
+// prune-audit measured at 30-50K worst case.
+const SYSTEM_BLOCK_RESERVE = 6_000
+
 function isOrphanedInterruptedTool(part: MessageV2.ToolPart) {
   // cleanup() marks abandoned tool_use blocks this way after retries/aborts.
   // They are not pending work and must not trigger an assistant-prefill request.
@@ -1416,12 +1445,11 @@ export const layer = Layer.effect(
           if (lastFinished && lastFinished.summary !== true) {
             const cfg = yield* config.get()
             const usable = usableContext({ cfg, model, outputTokenMax: flags.outputTokenMax })
-            const lastTokens =
-              lastFinished.tokens.total ||
-              lastFinished.tokens.input +
-                lastFinished.tokens.output +
-                lastFinished.tokens.cache.read +
-                lastFinished.tokens.cache.write
+            // Mirror overflow.isOverflow's count math: ?? not || (provider
+            // `total` can be a known under-count, e.g. Anthropic's shared
+            // fallback omits cache/reasoning), and include `reasoning`.
+            const lt = lastFinished.tokens
+            const lastTokens = lt.total ?? lt.input + lt.output + (lt.reasoning ?? 0) + lt.cache.read + lt.cache.write
             // Approximate the size of the new user message (the one the
             // user just sent that triggered this loop). lastFinished.tokens
             // is from the PREVIOUS assistant — it doesn't see the new user
@@ -1430,10 +1458,20 @@ export const layer = Layer.effect(
             const newUserMsg = msgs.findLast((m) => m.info.role === "user" && m.info.id > lastFinished.id)
             // Count the user message's real text with a true tokenizer (len/4 badly
             // under-counts code/CJK, which is exactly when a big paste slips past).
+            // Also charge a flat per-attachment budget — without this an image-only
+            // paste contributes 0 to the trigger, but the wire actually ships
+            // ~1500 vision tokens per image.
             const newUserApprox = newUserMsg
-              ? yield* Token.count(newUserMsg.parts.map((p) => (p.type === "text" ? p.text : "")).join("\n"))
+              ? (yield* Token.count(newUserMsg.parts.map((p) => (p.type === "text" ? p.text : "")).join("\n"))) +
+                approxAttachmentTokens(newUserMsg.parts)
               : 0
-            const projected = lastTokens + newUserApprox
+            // Reserve headroom for the parts of the next request the trigger
+            // doesn't directly count: the rebuilt system block (memory index +
+            // agent.md + _plan.md + skills + persona — typical 5-10K, can grow),
+            // plus the post-trigger injections (auto-recall block ≤2K, soft
+            // checkpoint reminder, per-step reminder wraps). Conservative on
+            // purpose so the trigger errs on the cut-sooner side.
+            const projected = lastTokens + newUserApprox + SYSTEM_BLOCK_RESERVE
             // Soft checkpoint: at ~60% fill, ahead of the 80% eviction below,
             // flag this turn so we can nudge the model to persist durable state
             // to memory before older turns become unrecoverable.

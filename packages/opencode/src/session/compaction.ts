@@ -43,7 +43,11 @@ export const PRUNE_TURN_KEEP_FRACTION = 0.6
 // exceeds this fraction of usable context.
 export const PRUNE_TURN_TRIGGER_FRACTION = 0.8
 const TOOL_OUTPUT_MAX_CHARS = 2_000
-const PRUNE_PROTECTED_TOOLS = ["skill_section"]
+// Tools whose outputs the live turn relies on directly — never mask them in
+// pass-1, even when their output is large. session_recall is how the model
+// recovers evicted context; memory.search/view is how it reads its own brain.
+// Masking either makes recovery worse than the eviction it's supposedly buying.
+const PRUNE_PROTECTED_TOOLS = ["skill_section", "session_recall", "memory"]
 const DEFAULT_TAIL_TURNS = 2
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 8_000
@@ -318,7 +322,14 @@ export const layer = Layer.effect(
       keepTokens?: number
     }) {
       const cfg = yield* config.get()
-      if (!cfg.compaction?.prune) return
+      // Default ON. Only an explicit `compaction.prune: false` (or env override
+      // OPENCODE_DISABLE_PRUNE) disables it. Matches the pattern used by
+      // overflow.ts:26 for `auto`. Without this gate inversion, the schema's
+      // documented "(default: true)" was a lie — Schema.optional with no
+      // withDefault leaves it undefined, which the old `!cfg.compaction?.prune`
+      // treated as off. Result: every default-config user had pruning silently
+      // disabled and the entire memory/auto-recall pipeline ran latent.
+      if (cfg.compaction?.prune === false) return
       log.info("pruning")
 
       const msgs = yield* session
@@ -342,7 +353,11 @@ export const layer = Layer.effect(
           if (part.state.status !== "completed") continue
           if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
           if (part.state.time.compacted) break loop
-          const estimate = Token.estimate(part.state.output)
+          // Use the real BPE tokenizer (Token.count, async) instead of the
+          // char/4 heuristic. Pass 1 protects ~PRUNE_PROTECT TOKENS of recent
+          // tool output, not chars; the previous Token.estimate under-counted
+          // code/CJK by 30-40%, shrinking the protected window in practice.
+          const estimate = yield* Token.count(part.state.output)
           total += estimate
           if (total <= PRUNE_PROTECT) continue
           pruned += estimate
