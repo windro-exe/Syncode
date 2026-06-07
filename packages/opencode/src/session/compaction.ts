@@ -371,10 +371,22 @@ export const layer = Layer.effect(
 
       log.info("found", { pruned, total })
       if (pruned > PRUNE_MINIMUM) {
+        const stamp = Date.now()
         for (const part of toPrune) {
           if (part.state.status === "completed") {
-            part.state.time.compacted = Date.now()
-            yield* session.updatePart(part)
+            // Don't mutate the live `part` reference — pass 2's own comment
+            // (~line 452) warns about exactly this: in-process subscribers
+            // retaining the ref see mutated state pre-write. updatePart does
+            // structuredClone for the DB write, but the in-memory msgs array
+            // we just iterated still holds this same object. Spread first.
+            const updated = {
+              ...part,
+              state: {
+                ...part.state,
+                time: { ...part.state.time, compacted: stamp },
+              },
+            } as MessageV2.ToolPart
+            yield* session.updatePart(updated)
           }
         }
         log.info("pruned", { count: toPrune.length })

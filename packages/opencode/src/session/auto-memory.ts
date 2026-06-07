@@ -90,6 +90,15 @@ export const layer = Layer.effect(
     // persisted note (below) so the dedup survives a restart.
     const done = new Map<SessionID, Set<string>>()
 
+    // Per-session in-flight guard. Prune is forked off the response path with
+    // Effect.forkIn(scope), which ESCAPES the per-session run lock — so two
+    // prunes within the 20s extract timeout could both fork extract for the
+    // same session, both hydrate from the same note, both filter overlapping
+    // ids, both LLM-extract, both append. dedupeFacts blunts content overlap
+    // but ids comments duplicate and tokens are wasted. This drops a duplicate
+    // fork at the door instead.
+    const inFlight = new Set<SessionID>()
+
     // Rebuild the seen-set for a session from the ids recorded in the note, the
     // first time we touch that session. This makes dedup durable across restarts
     // instead of living only in this in-process Map.
@@ -99,7 +108,11 @@ export const layer = Layer.effect(
       const seen = new Set<string>()
       const viewed = yield* memory.view({ scope: "session", path: NOTE_PATH, ctx: { sessionID } }).pipe(Effect.option)
       if (viewed._tag === "Some" && viewed.value.entry) {
-        for (const m of viewed.value.entry.content.matchAll(/<!--\s*ids:\s*([^>]*?)\s*-->/g)) {
+        // Tolerant of partial writes / manual edits / truncated `-->`: accept
+        // anything from `<!-- ids: ` up to the next `>` OR the end of line.
+        // Multiline-anchored. Matches both `<!-- ids: a,b -->` and the
+        // half-broken `<!-- ids: a,b\n` cases hydrate would silently miss.
+        for (const m of viewed.value.entry.content.matchAll(/<!--\s*ids:\s*([^>\r\n]+?)\s*(?:-->|$)/gm)) {
           for (const id of m[1]!.split(",").map((s) => s.trim()).filter(Boolean)) seen.add(id)
         }
       }
@@ -139,11 +152,20 @@ export const layer = Layer.effect(
     })
 
     const extract = Effect.fn("AutoMemory.extract")(function* (input: ExtractInput) {
-      const seen = yield* hydrate(input.sessionID)
-      const targets = input.messages.filter(
-        (m) => m.info.pruned && !seen.has(m.info.id) && (m.info.role === "user" || m.info.role === "assistant"),
-      )
-      if (targets.length === 0) return
+      // Per-session in-flight guard. The fork that calls us escapes the session
+      // run-state lock, so two prunes within the 20s extract timeout could
+      // both reach this function for the same session. Drop the second one.
+      if (inFlight.has(input.sessionID)) {
+        log.info("auto-memory: extract skipped (already in flight)", { sessionID: input.sessionID })
+        return
+      }
+      inFlight.add(input.sessionID)
+      try {
+        const seen = yield* hydrate(input.sessionID)
+        const targets = input.messages.filter(
+          (m) => m.info.pruned && !seen.has(m.info.id) && (m.info.role === "user" || m.info.role === "assistant"),
+        )
+        if (targets.length === 0) return
       const ids = targets.map((m) => m.info.id)
 
       const source = renderForExtraction(targets)
@@ -214,9 +236,12 @@ export const layer = Layer.effect(
           }),
         ),
       )
-      if (!appended) return
-      for (const id of ids) seen.add(id)
-      log.info("auto-memory: appended", { messages: targets.length, chars: newFacts.length })
+        if (!appended) return
+        for (const id of ids) seen.add(id)
+        log.info("auto-memory: appended", { messages: targets.length, chars: newFacts.length })
+      } finally {
+        inFlight.delete(input.sessionID)
+      }
     })
 
     return Service.of({ extract })

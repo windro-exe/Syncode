@@ -509,7 +509,14 @@ export const layer = Layer.effect(
         .map((t) => t.replace(/[^\w\-/.]/g, "").trim())
         .filter(Boolean)
       if (tokens.length === 0) return []
-      const ftsQuery = tokens.map((t) => `${t}*`).join(" OR ")
+      // FTS5 default operator: space-separated tokens are AND-matched (every
+      // token must appear in the entry). The previous " OR " produced massive
+      // false-positive noise — a 5-word user query would surface any memory
+      // sharing one common word. AND is the modern search default and gives
+      // the auto-recall path real precision; explicit memory-search tool calls
+      // benefit too. Multi-token queries unlikely to match anything just
+      // gracefully return zero rather than spamming irrelevant memories.
+      const ftsQuery = tokens.map((t) => `${t}*`).join(" ")
       const sessionID = input.ctx.sessionID
       const rows = yield* tryDb(() =>
         Database.use((db) => {
