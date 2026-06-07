@@ -79,6 +79,23 @@ describe("memory.recall", () => {
     }),
   )
 
+  it.instance("ignores trivial / stopword-only turns", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory.Service
+      const sid = yield* newSession
+      yield* memory.create({
+        scope: "session",
+        path: "/memories/topics/auth.md",
+        content: "JWT tokens are signed with RS256",
+        ctx: { sessionID: sid },
+      })
+      // "ok yes continue" is all stopwords -> no recall, even though a memory exists.
+      expect(yield* memory.recall({ query: "ok yes continue", ctx: { sessionID: sid } })).toBeUndefined()
+      // a single meaningful word is still below the 2-word threshold
+      expect(yield* memory.recall({ query: "please continue now", ctx: { sessionID: sid } })).toBeUndefined()
+    }),
+  )
+
   it.instance("recall does not reinforce, but explicit search does", () =>
     Effect.gen(function* () {
       const memory = yield* Memory.Service

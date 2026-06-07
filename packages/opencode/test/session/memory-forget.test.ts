@@ -72,6 +72,25 @@ describe("memory.forget", () => {
     }),
   )
 
+  it.instance("never evicts an entry that has been viewed (touched) even if never searched", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory.Service
+      const sid = yield* newSession
+      yield* memory.create({
+        scope: "session",
+        path: "/memories/topics/read.md",
+        content: "a fact the user reads via the index but never explicitly searches",
+        ctx: { sessionID: sid },
+      })
+      // Reading bumps access_count (a "touched" signal), so forget must spare it.
+      yield* memory.view({ scope: "session", path: "/memories/topics/read.md", ctx: { sessionID: sid } })
+      const n = yield* memory.forget({ scope: "session", ctx: { sessionID: sid }, now: FUTURE })
+      expect(n).toBe(0)
+      const found = yield* memory.search({ query: "fact reads index", ctx: { sessionID: sid }, reinforce: false })
+      expect(found.length).toBeGreaterThanOrEqual(1)
+    }),
+  )
+
   it.instance("does not evict recent entries (age rail)", () =>
     Effect.gen(function* () {
       const memory = yield* Memory.Service

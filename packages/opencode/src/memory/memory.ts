@@ -26,6 +26,17 @@ const PROTECTED_PATHS = new Set([
   "/memories/evicted-context.md",
 ])
 
+// Auto-recall only fires when the turn has real lexical content. These common
+// words are ignored so "ok" / "yes" / "continue" / "is this right?" don't pull
+// random memories into context.
+const RECALL_STOPWORDS = new Set(
+  (
+    "the a an is are was were be been being do does did doing have has had to of in on for and or but with as at by from " +
+    "this that these those it its i you we they he she me my your our their what why how when where who which can could " +
+    "would should will just ok okay yes no sure please thanks thank continue go now then so if not do dont let lets"
+  ).split(" "),
+)
+
 // Stable hash of an entry's content, for exact-duplicate detection (Phase 1).
 export function hashContent(content: string): string {
   return createHash("sha256").update(content.trim()).digest("hex")
@@ -315,10 +326,20 @@ export const layer = Layer.effect(
       const p = yield* normalizePath(requested)
       const exact = yield* fetchOne(input.scope, p, sessionID)
       if (exact) {
-        // Reading a memory is NOT a relevance signal. We deliberately do not bump
-        // access_count / time_accessed here: doing so created a rich-get-richer
-        // ranking loop (a read inflated the entry's own future rank) and churned
-        // the injected index every turn, busting the prompt cache.
+        // Record that the entry was looked at — but ONLY access_count, never
+        // time_accessed. access_count no longer feeds ranking (that's
+        // reinforcement) nor the index order (that's path), so this can't
+        // recreate the old rich-get-richer loop or churn the cache; it exists
+        // purely as a "has been touched" signal so forgetting spares anything
+        // the user actually reads. Best-effort.
+        yield* tryDb(() =>
+          Database.transaction((db) => {
+            db.update(MemoryEntryTable)
+              .set({ access_count: sql`${MemoryEntryTable.access_count} + 1` })
+              .where(eq(MemoryEntryTable.id, exact.id))
+              .run()
+          }),
+        ).pipe(Effect.orElseSucceed(() => undefined))
         let entry = row2entry(exact)
         if (input.range) {
           const [start, end] = input.range
@@ -560,7 +581,16 @@ export const layer = Layer.effect(
     const recall: Interface["recall"] = Effect.fn("Memory.recall")(function* (input) {
       const limit = Math.max(1, Math.min(input.limit ?? 3, 8))
       const skip = new Set(input.skipPaths ?? [])
-      const hits = yield* search({ query: input.query, ctx: input.ctx, limit: limit * 3, reinforce: false })
+      // Gate out trivial/stopword-only turns so recall doesn't surface random
+      // memories on "ok" / "yes" / "continue". Require at least two meaningful
+      // words, and search only those.
+      const meaningful = input.query
+        .toLowerCase()
+        .split(/\s+/)
+        .map((t) => t.replace(/[^\w]/g, ""))
+        .filter((t) => t.length > 2 && !RECALL_STOPWORDS.has(t))
+      if (meaningful.length < 2) return undefined
+      const hits = yield* search({ query: meaningful.join(" "), ctx: input.ctx, limit: limit * 3, reinforce: false })
       // FTS MATCH already filters to entries sharing a query term, and search()
       // ranks them by the composite score; take the top-k. (No absolute BM25
       // floor — BM25 is corpus-scale-dependent and degenerate on tiny stores.)
@@ -636,7 +666,12 @@ export const layer = Layer.effect(
           r.kind !== "procedural" &&
           r.importance < FORGET_IMPORTANCE_MAX &&
           r.reinforcement === 0 &&
-          now - (r.last_reinforced || r.time_created) > minAge &&
+          // never even looked at — guards facts the user reads via the index/view
+          // but never explicitly searches (which is most of them).
+          r.access_count === 0 &&
+          // age off the most recent of created / edited / reinforced, so an old
+          // entry that was edited recently is treated as live, not dead.
+          now - Math.max(r.last_reinforced, r.time_updated, r.time_created) > minAge &&
           !PROTECTED_PATHS.has(r.path),
       )
       if (victims.length === 0) return 0

@@ -1497,7 +1497,8 @@ export const layer = Layer.effect(
           // latest user message — cache-safe, never the cached system prefix —
           // so the model doesn't have to remember to search. Conservative and
           // lexical (BM25) for now; disable with OPENCODE_MEMORY_RECALL=0.
-          if (process.env["OPENCODE_MEMORY_RECALL"] !== "0") {
+          // Only on the first step of a turn (not every tool step).
+          if (step === 1 && process.env["OPENCODE_MEMORY_RECALL"] !== "0") {
             const recallUser = msgs.findLast((m) => m.info.role === "user")
             const queryText = recallUser?.parts
               .flatMap((p) => (p.type === "text" ? [p.text] : []))
