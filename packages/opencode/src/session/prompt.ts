@@ -1428,7 +1428,11 @@ export const layer = Layer.effect(
             // message yet, so a fresh 200K paste would slip past an
             // lastTokens-only check.
             const newUserMsg = msgs.findLast((m) => m.info.role === "user" && m.info.id > lastFinished.id)
-            const newUserApprox = newUserMsg ? Token.estimate(JSON.stringify(newUserMsg.parts)) : 0
+            // Count the user message's real text with a true tokenizer (len/4 badly
+            // under-counts code/CJK, which is exactly when a big paste slips past).
+            const newUserApprox = newUserMsg
+              ? yield* Token.count(newUserMsg.parts.map((p) => (p.type === "text" ? p.text : "")).join("\n"))
+              : 0
             const projected = lastTokens + newUserApprox
             // Soft checkpoint: at ~60% fill, ahead of the 80% eviction below,
             // flag this turn so we can nudge the model to persist durable state

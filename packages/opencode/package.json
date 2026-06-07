@@ -139,6 +139,7 @@
     "gitlab-ai-provider": "6.7.0",
     "glob": "13.0.5",
     "google-auth-library": "10.5.0",
+    "gpt-tokenizer": "3.4.0",
     "gray-matter": "4.0.3",
     "htmlparser2": "8.0.2",
     "ignore": "7.0.5",

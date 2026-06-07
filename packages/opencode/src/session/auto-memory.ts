@@ -70,53 +70,76 @@ export const layer = Layer.effect(
     const config = yield* Config.Service
     const memory = yield* Memory.Service
     // Per-session set of message ids already distilled, so the same evicted
-    // turns are not re-extracted on every subsequent prune.
+    // turns are not re-extracted on every subsequent prune. Hydrated from the
+    // persisted note (below) so the dedup survives a restart.
     const done = new Map<SessionID, Set<string>>()
 
-    const appendNote = Effect.fn("AutoMemory.appendNote")(function* (sessionID: SessionID, facts: string) {
+    // Rebuild the seen-set for a session from the ids recorded in the note, the
+    // first time we touch that session. This makes dedup durable across restarts
+    // instead of living only in this in-process Map.
+    const hydrate = Effect.fn("AutoMemory.hydrate")(function* (sessionID: SessionID) {
+      const cached = done.get(sessionID)
+      if (cached) return cached
+      const seen = new Set<string>()
+      const viewed = yield* memory.view({ scope: "session", path: NOTE_PATH, ctx: { sessionID } }).pipe(Effect.option)
+      if (viewed._tag === "Some" && viewed.value.entry) {
+        for (const m of viewed.value.entry.content.matchAll(/<!--\s*ids:\s*([^>]*?)\s*-->/g)) {
+          for (const id of m[1]!.split(",").map((s) => s.trim()).filter(Boolean)) seen.add(id)
+        }
+      }
+      done.set(sessionID, seen)
+      return seen
+    })
+
+    const appendNote = Effect.fn("AutoMemory.appendNote")(function* (
+      sessionID: SessionID,
+      facts: string,
+      ids: string[],
+    ) {
       const ctx = { sessionID }
       const stamp = new Date().toISOString().slice(0, 16).replace("T", " ")
-      const block = [`## Evicted ${stamp}`, facts, ""].join("\n")
+      // Record which message ids this block was distilled from so hydrate() can
+      // rebuild the dedup set after a restart.
+      const block = [`## Evicted ${stamp}`, `<!-- ids: ${ids.join(",")} -->`, facts, ""].join("\n")
       const viewed = yield* memory.view({ scope: "session", path: NOTE_PATH, ctx }).pipe(Effect.option)
       if (viewed._tag === "None" || !viewed.value.entry) {
-        yield* memory
-          .create({
-            scope: "session",
-            path: NOTE_PATH,
-            title: "Auto-extracted facts from evicted turns",
-            tags: ["auto", "evicted"],
-            content: [
-              "Durable facts auto-distilled from conversation turns evicted to save context.",
-              "Full turns remain recoverable with the session_recall tool.",
-              "",
-              block,
-            ].join("\n"),
-            ctx,
-          })
-          .pipe(Effect.ignore)
+        yield* memory.create({
+          scope: "session",
+          path: NOTE_PATH,
+          title: "Auto-extracted facts from evicted turns",
+          tags: ["auto", "evicted"],
+          content: [
+            "Durable facts auto-distilled from conversation turns evicted to save context.",
+            "Full turns remain recoverable with the session_recall tool.",
+            "",
+            block,
+          ].join("\n"),
+          ctx,
+        })
         return
       }
       const lineCount = viewed.value.entry.content.split("\n").length
-      yield* memory.insert({ scope: "session", path: NOTE_PATH, line: lineCount, text: "\n" + block, ctx }).pipe(Effect.ignore)
+      yield* memory.insert({ scope: "session", path: NOTE_PATH, line: lineCount, text: "\n" + block, ctx })
     })
 
     const extract = Effect.fn("AutoMemory.extract")(function* (input: ExtractInput) {
-      const seen = done.get(input.sessionID) ?? new Set<string>()
+      const seen = yield* hydrate(input.sessionID)
       const targets = input.messages.filter(
         (m) => m.info.pruned && !seen.has(m.info.id) && (m.info.role === "user" || m.info.role === "assistant"),
       )
       if (targets.length === 0) return
-      // Mark targets handled up front so a failed/slow extraction does not get
-      // retried against the same turns on the next prune.
-      for (const m of targets) seen.add(m.info.id)
-      done.set(input.sessionID, seen)
+      const ids = targets.map((m) => m.info.id)
 
       const source = renderForExtraction(targets)
-      if (!source.trim()) return
+      if (!source.trim()) {
+        // Nothing renderable in these turns; mark handled so we don't reprocess them.
+        for (const id of ids) seen.add(id)
+        return
+      }
 
       const cfg = yield* config.get()
       const model = yield* resolveExtractorModel(provider, cfg, input.fallbackModel)
-      if (!model) return
+      if (!model) return // no extractor model available; leave unseen to retry later
 
       const result = yield* llm
         .stream({
@@ -127,7 +150,7 @@ export const layer = Layer.effect(
           tools: {},
           model,
           sessionID: input.sessionID,
-          retries: 0,
+          retries: 2,
           messages: [{ role: "user", content: promptFor(source) }],
         })
         .pipe(
@@ -142,13 +165,28 @@ export const layer = Layer.effect(
             }),
           ),
         )
+      // Extraction failed/timed out — do NOT mark seen, so the next prune retries.
       if (!result) return
       const facts = result.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>\s*/gi, "").trim()
       if (!facts || /^none\.?$/i.test(facts)) {
+        // Successful extraction, nothing worth keeping — mark handled.
+        for (const id of ids) seen.add(id)
         log.info("auto-memory: nothing worth keeping", { messages: targets.length })
         return
       }
-      yield* appendNote(input.sessionID, facts).pipe(Effect.ignore)
+      // Persist first; mark the turns handled only once the write actually
+      // succeeds, so a failed append is retried rather than silently dropped.
+      const appended = yield* appendNote(input.sessionID, facts, ids).pipe(
+        Effect.map(() => true),
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            log.info("auto-memory append failed", { cause: String(cause).slice(0, 200) })
+            return false
+          }),
+        ),
+      )
+      if (!appended) return
+      for (const id of ids) seen.add(id)
       log.info("auto-memory: appended", { messages: targets.length, chars: facts.length })
     })
 

@@ -32,5 +32,5 @@ Examples:
   view {scope: "global", path: "/memories"}
   view {scope: "session", path: "/memories/_plan.md"}
   create {scope: "global", path: "/memories/preferences.md", content: "..."}
-  str_replace {scope: "session", path: "/memories/_plan.md", old_str: "## Goal\n_unset_", new_str: "## Goal\nAdd dark-mode toggle to settings page."}
+  str_replace {scope: "session", path: "/memories/_plan.md", old_str: "## Goal\n_unset:goal_", new_str: "## Goal\nAdd dark-mode toggle to settings page."}
   search {query: "shell preferences", scope: "global"}

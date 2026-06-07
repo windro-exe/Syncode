@@ -5,7 +5,7 @@ import { Identifier } from "@/id/id"
 import { SessionID } from "@/session/schema"
 import { MemoryEntryTable, type MemoryScope } from "./memory.sql"
 import { score, normalizeBm25 } from "./scoring"
-import { and, desc, eq, isNull, sql } from "drizzle-orm"
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm"
 import { Context, Effect, Layer, Schema } from "effect"
 import path from "path"
 
@@ -208,13 +208,25 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const bus = yield* Bus.Service
 
+    // Map any thrown SQLite/storage error into a typed MemoryError so it surfaces
+    // as a normal tool failure (e.g. a UNIQUE violation, a locked db) instead of
+    // escaping as an uncaught Effect defect that crashes the tool.
+    const tryDb = <A>(thunk: () => A) =>
+      Effect.try({
+        try: thunk,
+        catch: (e) =>
+          new MemoryError({ message: `memory storage error: ${e instanceof Error ? e.message : String(e)}` }),
+      })
+
     function fetchOne(scope: MemoryScope, p: string, sessionID?: SessionID) {
-      return Database.use((db) =>
-        db
-          .select()
-          .from(MemoryEntryTable)
-          .where(and(scopePred(scope, sessionID), eq(MemoryEntryTable.path, p)))
-          .get(),
+      return tryDb(() =>
+        Database.use((db) =>
+          db
+            .select()
+            .from(MemoryEntryTable)
+            .where(and(scopePred(scope, sessionID), eq(MemoryEntryTable.path, p)))
+            .get(),
+        ),
       )
     }
 
@@ -224,11 +236,11 @@ export const layer = Layer.effect(
       if (Buffer.byteLength(input.content, "utf8") > MAX_CONTENT_BYTES) {
         yield* Effect.fail(new MemoryError({ message: `Content exceeds ${MAX_CONTENT_BYTES} bytes` }))
       }
-      const existing = yield* Effect.sync(() => fetchOne(input.scope, p, sessionID))
+      const existing = yield* fetchOne(input.scope, p, sessionID)
       if (existing) yield* Effect.fail(new MemoryError({ message: `Memory ${p} already exists` }))
       const now = Date.now()
       const id = Identifier.ascending("memory")
-      yield* Effect.sync(() =>
+      yield* tryDb(() =>
         Database.transaction((db) => {
           db.insert(MemoryEntryTable)
             .values({
@@ -248,7 +260,7 @@ export const layer = Layer.effect(
             .run()
         }),
       )
-      const row = yield* Effect.sync(() => fetchOne(input.scope, p, sessionID))
+      const row = yield* fetchOne(input.scope, p, sessionID)
       const entry = row2entry(row!)
       yield* bus.publish(Event.Created, entry)
       return entry
@@ -258,22 +270,13 @@ export const layer = Layer.effect(
       const sessionID = yield* requireSession(input.scope, input.ctx)
       const requested = input.path.trim() || MEMORY_ROOT
       const p = yield* normalizePath(requested)
-      const exact = yield* Effect.sync(() => fetchOne(input.scope, p, sessionID))
+      const exact = yield* fetchOne(input.scope, p, sessionID)
       if (exact) {
-        // Bump access counters.
-        yield* Effect.sync(() =>
-          Database.transaction((db) => {
-            db.update(MemoryEntryTable)
-              .set({
-                access_count: sql`${MemoryEntryTable.access_count} + 1`,
-                time_accessed: Date.now(),
-              })
-              .where(eq(MemoryEntryTable.id, exact.id))
-              .run()
-          }),
-        )
-        const row = yield* Effect.sync(() => fetchOne(input.scope, p, sessionID))
-        let entry = row2entry(row!)
+        // Reading a memory is NOT a relevance signal. We deliberately do not bump
+        // access_count / time_accessed here: doing so created a rich-get-richer
+        // ranking loop (a read inflated the entry's own future rank) and churned
+        // the injected index every turn, busting the prompt cache.
+        let entry = row2entry(exact)
         if (input.range) {
           const [start, end] = input.range
           const lines = entry.content.split(/\r?\n/)
@@ -291,13 +294,13 @@ export const layer = Layer.effect(
       }
       // Treat as directory: list anything under prefix.
       const prefix = p === MEMORY_ROOT ? MEMORY_ROOT : p.replace(/\/$/, "")
-      const rows = yield* Effect.sync(() =>
+      const rows = yield* tryDb(() =>
         Database.use((db) =>
           db
             .select()
             .from(MemoryEntryTable)
             .where(scopePred(input.scope, sessionID))
-            .orderBy(desc(MemoryEntryTable.pinned), desc(MemoryEntryTable.time_accessed))
+            .orderBy(desc(MemoryEntryTable.pinned), asc(MemoryEntryTable.path))
             .all(),
         ),
       )
@@ -314,13 +317,13 @@ export const layer = Layer.effect(
       p: string,
       mutate: (current: string) => Effect.Effect<string, MemoryError>,
     ) {
-      const existing = yield* Effect.sync(() => fetchOne(scope, p, sessionID))
+      const existing = yield* fetchOne(scope, p, sessionID)
       if (!existing) yield* Effect.fail(new MemoryError({ message: `The path ${p} does not exist.` }))
       const next = yield* mutate(existing!.content)
       if (Buffer.byteLength(next, "utf8") > MAX_CONTENT_BYTES) {
         yield* Effect.fail(new MemoryError({ message: `Content exceeds ${MAX_CONTENT_BYTES} bytes` }))
       }
-      yield* Effect.sync(() =>
+      yield* tryDb(() =>
         Database.transaction((db) => {
           db.update(MemoryEntryTable)
             .set({ content: next, time_updated: Date.now(), time_accessed: Date.now() })
@@ -328,7 +331,7 @@ export const layer = Layer.effect(
             .run()
         }),
       )
-      const row = yield* Effect.sync(() => fetchOne(scope, p, sessionID))
+      const row = yield* fetchOne(scope, p, sessionID)
       const entry = row2entry(row!)
       yield* bus.publish(Event.Updated, entry)
       return entry
@@ -378,9 +381,9 @@ export const layer = Layer.effect(
     const remove: Interface["remove"] = Effect.fn("Memory.remove")(function* (input) {
       const sessionID = yield* requireSession(input.scope, input.ctx)
       const p = yield* normalizePath(input.path)
-      const exact = yield* Effect.sync(() => fetchOne(input.scope, p, sessionID))
+      const exact = yield* fetchOne(input.scope, p, sessionID)
       if (exact) {
-        yield* Effect.sync(() =>
+        yield* tryDb(() =>
           Database.transaction((db) => {
             db.delete(MemoryEntryTable).where(eq(MemoryEntryTable.id, exact.id)).run()
           }),
@@ -390,7 +393,7 @@ export const layer = Layer.effect(
       }
       // directory delete: nuke everything under prefix
       const prefix = p.replace(/\/$/, "")
-      const rows = yield* Effect.sync(() =>
+      const rows = yield* tryDb(() =>
         Database.use((db) =>
           db.select().from(MemoryEntryTable).where(scopePred(input.scope, sessionID)).all(),
         ),
@@ -399,7 +402,7 @@ export const layer = Layer.effect(
       if (matched.length === 0) {
         yield* Effect.fail(new MemoryError({ message: `The path ${p} does not exist.` }))
       }
-      yield* Effect.sync(() =>
+      yield* tryDb(() =>
         Database.transaction((db) => {
           for (const row of matched) {
             db.delete(MemoryEntryTable).where(eq(MemoryEntryTable.id, row.id)).run()
@@ -415,11 +418,11 @@ export const layer = Layer.effect(
       const sessionID = yield* requireSession(input.scope, input.ctx)
       const oldP = yield* normalizePath(input.oldPath)
       const newP = yield* normalizePath(input.newPath)
-      const existing = yield* Effect.sync(() => fetchOne(input.scope, oldP, sessionID))
+      const existing = yield* fetchOne(input.scope, oldP, sessionID)
       if (!existing) yield* Effect.fail(new MemoryError({ message: `The path ${oldP} does not exist.` }))
-      const conflict = yield* Effect.sync(() => fetchOne(input.scope, newP, sessionID))
+      const conflict = yield* fetchOne(input.scope, newP, sessionID)
       if (conflict) yield* Effect.fail(new MemoryError({ message: `The destination ${newP} already exists.` }))
-      yield* Effect.sync(() =>
+      yield* tryDb(() =>
         Database.transaction((db) => {
           db.update(MemoryEntryTable)
             .set({ path: newP, time_updated: Date.now() })
@@ -427,7 +430,7 @@ export const layer = Layer.effect(
             .run()
         }),
       )
-      const row = yield* Effect.sync(() => fetchOne(input.scope, newP, sessionID))
+      const row = yield* fetchOne(input.scope, newP, sessionID)
       const entry = row2entry(row!)
       yield* bus.publish(Event.Updated, entry)
       return entry
@@ -444,7 +447,7 @@ export const layer = Layer.effect(
       if (tokens.length === 0) return []
       const ftsQuery = tokens.map((t) => `${t}*`).join(" OR ")
       const sessionID = input.ctx.sessionID
-      const rows = yield* Effect.sync(() =>
+      const rows = yield* tryDb(() =>
         Database.use((db) => {
           const stmt = sql`
             SELECT m.*, fts.rank as bm25
@@ -462,6 +465,10 @@ export const layer = Layer.effect(
           `
           return db.all<typeof MemoryEntryTable.$inferSelect & { bm25: number }>(stmt)
         }),
+      ).pipe(
+        // A malformed FTS query or storage hiccup must not crash search — degrade
+        // to no results rather than throwing an uncaught defect.
+        Effect.orElseSucceed(() => [] as Array<typeof MemoryEntryTable.$inferSelect & { bm25: number }>),
       )
       const now = Date.now()
       const ranked = rows
@@ -485,7 +492,7 @@ export const layer = Layer.effect(
     })
 
     const index: Interface["index"] = Effect.fn("Memory.index")(function* (input) {
-      const rows = yield* Effect.sync(() =>
+      const rows = yield* tryDb(() =>
         Database.use((db) =>
           db
             .select()
@@ -495,10 +502,12 @@ export const layer = Layer.effect(
                 ? sql`(${MemoryEntryTable.session_id} IS NULL OR ${MemoryEntryTable.session_id} = ${input.ctx.sessionID})`
                 : isNull(MemoryEntryTable.session_id),
             )
-            .orderBy(desc(MemoryEntryTable.pinned), desc(MemoryEntryTable.time_accessed))
+            // Deterministic, access-independent order so the injected index is
+            // byte-stable turn-to-turn (keeps the prompt cache prefix intact).
+            .orderBy(desc(MemoryEntryTable.pinned), asc(MemoryEntryTable.path))
             .all(),
         ),
-      )
+      ).pipe(Effect.orElseSucceed(() => [] as Array<typeof MemoryEntryTable.$inferSelect>))
       const global = rows.filter((row) => row.scope === "global").map(row2list)
       const session = rows.filter((row) => row.scope === "session").map(row2list)
       return { global, session }
@@ -507,9 +516,9 @@ export const layer = Layer.effect(
     const touch: Interface["touch"] = Effect.fn("Memory.touch")(function* (input) {
       const sessionID = yield* requireSession(input.scope, input.ctx)
       const p = yield* normalizePath(input.path)
-      const existing = yield* Effect.sync(() => fetchOne(input.scope, p, sessionID))
+      const existing = yield* fetchOne(input.scope, p, sessionID)
       if (!existing) return
-      yield* Effect.sync(() =>
+      yield* tryDb(() =>
         Database.transaction((db) => {
           db.update(MemoryEntryTable)
             .set({

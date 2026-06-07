@@ -131,11 +131,11 @@ export const layer = Layer.effect(
         const agentBlock = (() => {
           if (!inlineEntry || !inlineEntry.entry) return null
           const content = inlineEntry.entry.content
-          const unfilled = /_unset_/.test(content)
+          const unfilled = /_unset[_:]/.test(content)
           if (unfilled) {
             return [
               "<agent-preferences status=\"unfilled\">",
-              "The /memories/agent.md file is shown below. The user has NOT yet filled it in. On your VERY FIRST reply this session, before doing anything else, ask the three questions in the file (name, style, personality), wait for the user's answers, then save them by calling the memory tool with command=str_replace to overwrite the `_unset_` markers in /memories/agent.md (scope=global). Then continue with the user's actual request.",
+              "The /memories/agent.md file is shown below. The user has NOT yet filled it in. On your VERY FIRST reply this session, before doing anything else, ask the three questions in the file (name, style, personality), wait for the user's answers, then save them by calling the memory tool with command=str_replace to overwrite each `_unset:..._` placeholder (e.g. `_unset:name_`) in /memories/agent.md (scope=global). Then continue with the user's actual request.",
               content,
               "</agent-preferences>",
             ].join("\n")
@@ -153,11 +153,11 @@ export const layer = Layer.effect(
         const sessionBlock = (() => {
           if (!sessionPlanEntry || !sessionPlanEntry.entry) return null
           const content = sessionPlanEntry.entry.content
-          const unfilled = /_unset_/.test(content)
+          const unfilled = /_unset[_:]/.test(content)
           if (unfilled) {
             return [
               "<session-state status=\"unfilled\">",
-              "The /memories/_plan.md file (scope=session) is your scratchpad for THIS conversation only. As the task takes shape, fill the sections below using `memory` tool with command=str_replace to overwrite each `_unset_` marker, and keep them current with command=str_replace as decisions evolve. This lets a future turn (after context overflow or compaction) resume from a clean snapshot. Don't put durable user-level facts here — those go to global scope.",
+              "The /memories/_plan.md file (scope=session) is your scratchpad for THIS conversation only. As the task takes shape, fill the sections by calling the memory tool with command=str_replace, old_str set to the placeholder (e.g. `_unset:goal_`). You do NOT need to rewrite it every turn — update it at natural checkpoints (a decision is made, a step finishes, the plan changes) so a future turn (after context overflow) can resume from a clean snapshot. Don't put durable user-level facts here — those go to global scope.",
               content,
               "</session-state>",
             ].join("\n")

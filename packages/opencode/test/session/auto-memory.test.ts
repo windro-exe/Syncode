@@ -92,6 +92,34 @@ describe("session.auto-memory", () => {
       expect(note).toBeDefined()
       expect(note).toContain("src/auth.ts")
       expect(note).toContain("use bun for tests")
+      // The block records which message ids it was distilled from, so dedup can
+      // be rebuilt after a restart.
+      expect(note).toContain("<!-- ids:")
+    }),
+  )
+
+  it.instance("hydrates dedup from the note so a restart does not re-extract", () =>
+    Effect.gen(function* () {
+      // Simulate a prior process: the note already exists and records the id of
+      // a turn it distilled. A fresh AutoMemory has an empty in-process set, so
+      // it must rebuild dedup from the note and skip that turn.
+      const memory = yield* Memory.Service
+      const auto = yield* AutoMemory.Service
+      const sid = (yield* (yield* SessionNs.Service).create({})).id
+      const msg = prunedMsg(sid, "assistant", "already distilled work")
+      yield* memory.create({
+        scope: "session",
+        path: "/memories/evicted-context.md",
+        content: ["prior facts", `<!-- ids: ${msg.info.id} -->`, "- prior fact"].join("\n"),
+        ctx: { sessionID: sid },
+      })
+
+      llmOutput = "- NEW fact SHOULD NOT APPEAR"
+      yield* auto.extract({ sessionID: sid, messages: [msg], agent: fakeAgent, user: fakeUser, fallbackModel: fakeModel })
+
+      const note = yield* readNote(sid)
+      expect(note).toContain("prior fact")
+      expect(note).not.toContain("SHOULD NOT APPEAR")
     }),
   )
 

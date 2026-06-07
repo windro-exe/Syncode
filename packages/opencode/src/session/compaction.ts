@@ -252,7 +252,11 @@ export const layer = Layer.effect(
       model: Provider.Model
     }) {
       const msgs = yield* MessageV2.toModelMessagesEffect(input.messages, input.model)
-      return Token.estimate(JSON.stringify(msgs))
+      // Eviction sizing decides how many turns get cut, so use a real tokenizer
+      // rather than the char heuristic. Serializing the model messages keeps all
+      // model-visible content (tool results included) in the count; the small
+      // structural overhead errs conservative (cut slightly more, never less).
+      return yield* Token.count(JSON.stringify(msgs))
     })
 
     const select = Effect.fn("SessionCompaction.select")(function* (input: {
