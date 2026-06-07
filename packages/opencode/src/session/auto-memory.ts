@@ -15,6 +15,38 @@ const log = Log.create({ service: "session.auto-memory" })
 const EXTRACT_TIMEOUT = "20 seconds"
 const SOURCE_CAP = 12000
 const NOTE_PATH = "/memories/evicted-context.md"
+// Trigger rotation a bit under memory's 64KB MAX_CONTENT_BYTES so we always
+// have room for one more append. Without rotation, the note silently fails
+// every append once full and every prune burns a small-model LLM call into a
+// guaranteed write failure. Threshold here is the projected size of the new
+// content; if it'd exceed this, rotate by dropping the oldest blocks.
+const NOTE_ROTATE_THRESHOLD = 56 * 1024
+// Drop oldest "## Evicted ..." blocks until total content fits under threshold.
+// Keeps the per-file header (everything before the first block) and a marker
+// for how many were rotated. Hydrate will still recover ids from the blocks
+// that remain — older ones are gone and their facts have been summarized into
+// memory by now anyway (or the model already moved past them).
+function rotateNote(existing: string, newBlock: string, threshold: number): string {
+  const headIdx = existing.indexOf("## Evicted")
+  const head = headIdx >= 0 ? existing.slice(0, headIdx) : existing.replace(/\n*$/, "\n\n")
+  const tail = headIdx >= 0 ? existing.slice(headIdx) : ""
+  const blocks = tail.split(/(?=^## Evicted )/m).filter((b) => b.trim().length > 0)
+  blocks.push(newBlock.endsWith("\n") ? newBlock : newBlock + "\n")
+  let dropped = 0
+  const size = (parts: string[]) =>
+    Buffer.byteLength(head, "utf8") +
+    parts.reduce((s, b) => s + Buffer.byteLength(b, "utf8"), 0) +
+    (dropped > 0 ? 200 : 0)
+  while (blocks.length > 1 && size(blocks) > threshold) {
+    blocks.shift()
+    dropped++
+  }
+  const marker =
+    dropped > 0
+      ? `<!-- rotated: dropped ${dropped} oldest evicted block(s) to fit ${threshold}-byte cap -->\n\n`
+      : ""
+  return head + marker + blocks.join("")
+}
 
 // Auto-memory: when the sliding-window prune evicts whole turns, a small model
 // distills the durable facts out of them and appends them to a session memory
@@ -147,7 +179,19 @@ export const layer = Layer.effect(
         })
         return
       }
-      const lineCount = viewed.value.entry.content.split("\n").length
+      const existing = viewed.value.entry.content
+      // Rotate if the new block would push the file past memory's 64KB cap —
+      // otherwise updateContent fails forever and every subsequent prune burns
+      // a small-model LLM call into a guaranteed write failure. Drop oldest
+      // ## Evicted blocks (in order) to fit; keeps recent blocks + their id
+      // markers so hydrate can still dedup what's still in the file.
+      const candidate = existing + "\n" + block
+      if (Buffer.byteLength(candidate, "utf8") > NOTE_ROTATE_THRESHOLD) {
+        const rotated = rotateNote(existing, block, NOTE_ROTATE_THRESHOLD)
+        yield* memory.strReplace({ scope: "session", path: NOTE_PATH, oldStr: existing, newStr: rotated, ctx })
+        return
+      }
+      const lineCount = existing.split("\n").length
       yield* memory.insert({ scope: "session", path: NOTE_PATH, line: lineCount, text: "\n" + block, ctx })
     })
 
