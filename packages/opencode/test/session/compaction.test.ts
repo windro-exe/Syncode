@@ -996,7 +996,11 @@ describe("session.compaction.process", () => {
         const ssn = yield* SessionNs.Service
         const session = yield* ssn.create({})
         yield* createUserMessage(session.id, "older")
-        const recent = yield* createUserMessage(session.id, "recent image turn")
+        // The legacy estimate now strips media before sizing (matches what
+        // the live path actually ships, see fix(prune): strip media in older
+        // kept tail). So pad the text content so the recent turn genuinely
+        // exceeds the 2K-token preserve budget after image stripping.
+        const recent = yield* createUserMessage(session.id, "recent image turn " + "filler ".repeat(3_000))
         yield* ssn.updatePart({
           id: PartID.ascending(),
           messageID: recent.id,

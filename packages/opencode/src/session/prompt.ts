@@ -99,6 +99,9 @@ function approxAttachmentTokens(parts: ReadonlyArray<MessageV2.Part>): number {
   for (const p of parts) {
     if (p.type === "file" && typeof p.mime === "string") {
       const mt = p.mime.toLowerCase()
+      // text/plain and application/x-directory are filtered out by
+      // toModelMessages before they ship — don't count phantom tokens.
+      if (mt === "text/plain" || mt === "application/x-directory") continue
       if (mt.startsWith("image/") || mt.startsWith("application/") || mt.startsWith("text/")) {
         n += APPROX_TOKENS_PER_ATTACHMENT
       }

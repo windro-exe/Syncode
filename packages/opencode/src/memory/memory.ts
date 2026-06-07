@@ -155,6 +155,7 @@ export interface Interface {
     scope?: MemoryScope
     limit?: number
     reinforce?: boolean
+    matchMode?: "any" | "all"
     ctx: ScopeContext
   }) => Effect.Effect<SearchResult[]>
   readonly recall: (input: {
@@ -509,14 +510,13 @@ export const layer = Layer.effect(
         .map((t) => t.replace(/[^\w\-/.]/g, "").trim())
         .filter(Boolean)
       if (tokens.length === 0) return []
-      // FTS5 default operator: space-separated tokens are AND-matched (every
-      // token must appear in the entry). The previous " OR " produced massive
-      // false-positive noise — a 5-word user query would surface any memory
-      // sharing one common word. AND is the modern search default and gives
-      // the auto-recall path real precision; explicit memory-search tool calls
-      // benefit too. Multi-token queries unlikely to match anything just
-      // gracefully return zero rather than spamming irrelevant memories.
-      const ftsQuery = tokens.map((t) => `${t}*`).join(" ")
+      // matchMode: "any" (default) → tokens joined by " OR " — loose lexical
+      // recall, suits the explicit memory.search tool's fuzzy-find UX.
+      // "all" → space-joined (FTS5 default = AND) — every meaningful token
+      // must appear, used by auto-recall to avoid surfacing irrelevant
+      // memories on tangentially-related multi-word queries.
+      const matchMode = input.matchMode ?? "any"
+      const ftsQuery = tokens.map((t) => `${t}*`).join(matchMode === "all" ? " " : " OR ")
       const sessionID = input.ctx.sessionID
       const rows = yield* tryDb(() =>
         Database.use((db) => {
@@ -597,7 +597,18 @@ export const layer = Layer.effect(
         .map((t) => t.replace(/[^\w]/g, ""))
         .filter((t) => t.length > 2 && !RECALL_STOPWORDS.has(t))
       if (meaningful.length < 2) return undefined
-      const hits = yield* search({ query: meaningful.join(" "), ctx: input.ctx, limit: limit * 3, reinforce: false })
+      const hits = yield* search({
+        query: meaningful.join(" "),
+        ctx: input.ctx,
+        limit: limit * 3,
+        reinforce: false,
+        // Strict AND: every meaningful word must appear in the matched entry.
+        // The explicit search tool keeps the loose default ("any") so users
+        // can still fuzzy-find with single keywords; auto-recall doesn't get
+        // that luxury because surfacing irrelevant memories every turn is
+        // worse than surfacing nothing.
+        matchMode: "all",
+      })
       // FTS MATCH already filters to entries sharing a query term, and search()
       // ranks them by the composite score; take the top-k. (No absolute BM25
       // floor — BM25 is corpus-scale-dependent and degenerate on tiny stores.)

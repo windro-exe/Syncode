@@ -255,14 +255,15 @@ export const layer = Layer.effect(
       messages: MessageV2.WithParts[]
       model: Provider.Model
     }) {
-      // Eviction sizing decides how many turns get cut. Match the live render
-      // path: keep media on the most recent user turn (so the model can see
-      // the image it's currently being asked about) but strip from older user
-      // turns. Without this, JSON.stringify over multi-MB base64 + a BPE pass
-      // is a multi-second synchronous stall on the prompt path, AND the size
-      // estimate disagrees with what the live request actually ships.
+      // Eviction sizing decides how many turns get cut. The slices passed in
+      // here are always OLDER spans being weighed for keep-vs-evict — they
+      // never include the just-arrived user — and the live render strips
+      // media from older user turns (keepMediaForLatestUser scope is the
+      // FULL msgs array). Mirror that here with stripMedia: true so the
+      // estimator agrees with the wire and we don't over-count turns that
+      // happen to have a stale image.
       const msgs = yield* MessageV2.toModelMessagesEffect(input.messages, input.model, {
-        keepMediaForLatestUser: true,
+        stripMedia: true,
       })
       return yield* Token.count(JSON.stringify(msgs))
     })

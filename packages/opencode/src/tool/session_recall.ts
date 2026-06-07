@@ -47,8 +47,9 @@ function clip(s: string, max: number): string {
 function extractText(msg: MessageV2.WithParts): string {
   const chunks: string[] = []
   for (const part of msg.parts) {
-    if (part.type === "text" && part.text.trim()) chunks.push(part.text.trim())
-    else if (part.type === "reasoning" && part.text.trim()) chunks.push(`(reasoning) ${part.text.trim()}`)
+    if (part.type === "text" && part.text.trim()) chunks.push(clip(part.text.trim(), PER_BLOCK_CHARS))
+    else if (part.type === "reasoning" && part.text.trim())
+      chunks.push(`(reasoning) ${clip(part.text.trim(), PER_BLOCK_CHARS)}`)
     else if (part.type === "tool" && part.state.status === "completed" && part.state.output.trim())
       chunks.push(`[tool ${part.tool}] ${clip(part.state.output.trim(), PER_BLOCK_CHARS)}`)
     else if (part.type === "file") chunks.push(`[file: ${part.mime}${part.filename ? ` (${part.filename})` : ""}]`)

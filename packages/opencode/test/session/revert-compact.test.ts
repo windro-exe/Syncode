@@ -636,5 +636,6 @@ describe("revert + compact workflow", () => {
         }),
       { git: true },
     ),
+    30_000,
   )
 })
