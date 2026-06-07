@@ -131,8 +131,15 @@ export interface Interface {
     query: string
     scope?: MemoryScope
     limit?: number
+    reinforce?: boolean
     ctx: ScopeContext
   }) => Effect.Effect<SearchResult[]>
+  readonly recall: (input: {
+    query: string
+    ctx: ScopeContext
+    limit?: number
+    skipPaths?: string[]
+  }) => Effect.Effect<string | undefined>
   readonly index: (input: { ctx: ScopeContext }) => Effect.Effect<{ global: ListEntry[]; session: ListEntry[] }>
   readonly touch: (input: {
     scope: MemoryScope
@@ -510,7 +517,9 @@ export const layer = Layer.effect(
       // Reinforcement: a genuine retrieval (an entry actually returned to the
       // caller) strengthens the memory. This is the ONLY place reinforcement
       // grows — plain views never do, which keeps the signal non-gameable.
-      if (ranked.length > 0) {
+      // Automatic recall passes reinforce:false so background surfacing doesn't
+      // inflate the signal that forgetting later relies on.
+      if (ranked.length > 0 && input.reinforce !== false) {
         const ids = ranked.map((r) => r.entry.id)
         yield* tryDb(() =>
           Database.transaction((db) => {
@@ -524,6 +533,32 @@ export const layer = Layer.effect(
         ).pipe(Effect.orElseSucceed(() => undefined))
       }
       return ranked
+    })
+
+    // Automatic, context-driven recall (push, not pull): given the working
+    // context, return a ready-to-inject block of the most relevant memories'
+    // CONTENT. Lexical (BM25) today; the same seam takes hybrid/semantic later.
+    // Does not reinforce (it's background surfacing, not a deliberate use).
+    const recall: Interface["recall"] = Effect.fn("Memory.recall")(function* (input) {
+      const limit = Math.max(1, Math.min(input.limit ?? 3, 8))
+      const skip = new Set(input.skipPaths ?? [])
+      const hits = yield* search({ query: input.query, ctx: input.ctx, limit: limit * 3, reinforce: false })
+      // FTS MATCH already filters to entries sharing a query term, and search()
+      // ranks them by the composite score; take the top-k. (No absolute BM25
+      // floor — BM25 is corpus-scale-dependent and degenerate on tiny stores.)
+      const relevant = hits.filter((h) => !skip.has(h.entry.path)).slice(0, limit)
+      if (relevant.length === 0) return undefined
+      const lines = [
+        `<recalled-memory note="Automatically surfaced from your memory; may be relevant to this turn. Not the user's words.">`,
+      ]
+      for (const h of relevant) {
+        const content = h.entry.content.trim()
+        const snippet = content.length > 400 ? content.slice(0, 400) + " …" : content
+        lines.push(`[${h.entry.scope}] ${h.entry.path}${h.entry.title ? ` — ${h.entry.title}` : ""}`)
+        lines.push(`<snippet>${snippet}</snippet>`)
+      }
+      lines.push("</recalled-memory>")
+      return lines.join("\n")
     })
 
     const index: Interface["index"] = Effect.fn("Memory.index")(function* (input) {
@@ -574,6 +609,7 @@ export const layer = Layer.effect(
       remove,
       rename,
       search,
+      recall,
       index,
       touch,
     })

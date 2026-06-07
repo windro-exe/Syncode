@@ -1493,6 +1493,34 @@ export const layer = Layer.effect(
             Effect.provideService(Session.Service, sessions),
           )
 
+          // Auto-recall (push): surface memory relevant to THIS turn into the
+          // latest user message — cache-safe, never the cached system prefix —
+          // so the model doesn't have to remember to search. Conservative and
+          // lexical (BM25) for now; disable with OPENCODE_MEMORY_RECALL=0.
+          if (process.env["OPENCODE_MEMORY_RECALL"] !== "0") {
+            const recallUser = msgs.findLast((m) => m.info.role === "user")
+            const queryText = recallUser?.parts
+              .flatMap((p) => (p.type === "text" ? [p.text] : []))
+              .join(" ")
+              .slice(0, 2000)
+            if (recallUser && queryText && queryText.trim()) {
+              const block = yield* sys.recall({
+                query: queryText,
+                sessionID,
+                skipPaths: ["/memories/agent.md", "/memories/_plan.md"],
+              })
+              if (block)
+                recallUser.parts.push({
+                  id: PartID.ascending(),
+                  messageID: recallUser.info.id,
+                  sessionID: recallUser.info.sessionID,
+                  type: "text",
+                  text: block,
+                  synthetic: true,
+                })
+            }
+          }
+
           const msg: MessageV2.Assistant = {
             id: MessageID.ascending(),
             parentID: lastUser.id,

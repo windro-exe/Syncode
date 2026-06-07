@@ -35,6 +35,11 @@ export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info, sessionID: SessionID) => Effect.Effect<string | undefined>
   readonly memory: (sessionID: SessionID) => Effect.Effect<string | undefined>
+  readonly recall: (input: {
+    query: string
+    sessionID: SessionID
+    skipPaths?: string[]
+  }) => Effect.Effect<string | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
@@ -188,6 +193,14 @@ export const layer = Layer.effect(
           ...(sessionBlock ? ["", sessionBlock] : []),
           "</memory>",
         ].join("\n")
+      }),
+
+      recall: Effect.fn("SystemPrompt.recall")(function* (input) {
+        return yield* memorySvc.recall({
+          query: input.query,
+          ctx: { sessionID: input.sessionID },
+          skipPaths: input.skipPaths,
+        })
       }),
     })
   }),
