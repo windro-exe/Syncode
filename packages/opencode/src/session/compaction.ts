@@ -255,11 +255,15 @@ export const layer = Layer.effect(
       messages: MessageV2.WithParts[]
       model: Provider.Model
     }) {
-      const msgs = yield* MessageV2.toModelMessagesEffect(input.messages, input.model)
-      // Eviction sizing decides how many turns get cut, so use a real tokenizer
-      // rather than the char heuristic. Serializing the model messages keeps all
-      // model-visible content (tool results included) in the count; the small
-      // structural overhead errs conservative (cut slightly more, never less).
+      // Eviction sizing decides how many turns get cut. Match the live render
+      // path: keep media on the most recent user turn (so the model can see
+      // the image it's currently being asked about) but strip from older user
+      // turns. Without this, JSON.stringify over multi-MB base64 + a BPE pass
+      // is a multi-second synchronous stall on the prompt path, AND the size
+      // estimate disagrees with what the live request actually ships.
+      const msgs = yield* MessageV2.toModelMessagesEffect(input.messages, input.model, {
+        keepMediaForLatestUser: true,
+      })
       return yield* Token.count(JSON.stringify(msgs))
     })
 

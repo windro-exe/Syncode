@@ -633,10 +633,19 @@ function providerMeta(metadata: Record<string, any> | undefined) {
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
-  options?: { stripMedia?: boolean; toolOutputMaxChars?: number },
+  options?: { stripMedia?: boolean; keepMediaForLatestUser?: boolean; toolOutputMaxChars?: number },
 ) {
   const result: UIMessage[] = []
   const toolNames = new Set<string>()
+  // The id of the most recent user message — used by `keepMediaForLatestUser`
+  // to strip image/file media from older kept-tail user turns while preserving
+  // it on the just-arrived turn the model needs to actually look at. Stops a
+  // 4MB screenshot from re-shipping every turn until eviction (which compounds
+  // cache-prefix breakage).
+  const latestUserId = (() => {
+    for (let i = input.length - 1; i >= 0; i--) if (input[i]!.info.role === "user") return input[i]!.info.id
+    return undefined
+  })()
   // Track media from tool results that need to be injected as user messages
   // for providers that don't support that media type in tool results.
   //
@@ -739,7 +748,10 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
-          if (options?.stripMedia && isMedia(part.mime)) {
+          const stripThis =
+            options?.stripMedia ||
+            (options?.keepMediaForLatestUser && msg.info.id !== latestUserId)
+          if (stripThis && isMedia(part.mime)) {
             userMessage.parts.push({
               type: "text",
               text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,

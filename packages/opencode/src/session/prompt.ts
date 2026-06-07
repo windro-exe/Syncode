@@ -1702,7 +1702,7 @@ export const layer = Layer.effect(
               sys.skills(agent, sessionID),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
-              MessageV2.toModelMessagesEffect(msgs, model),
+              MessageV2.toModelMessagesEffect(msgs, model, { keepMediaForLatestUser: true }),
               sys.memory(sessionID).pipe(Effect.orElseSucceed(() => undefined)),
             ])
             const system = [
