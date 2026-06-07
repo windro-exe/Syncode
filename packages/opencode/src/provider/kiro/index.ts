@@ -267,14 +267,40 @@ const DOC_FORMAT: Record<string, "csv" | "doc" | "docx" | "html" | "md" | "pdf" 
 function fileBytesBase64(data: unknown): string | undefined {
   // The AI SDK delivers a v3 file part's `data` as Uint8Array | string | URL.
   // For data: URLs the SDK already strips the prefix and hands us the base64
-  // payload as a string; for Uint8Array we encode here. URLs are not inlined
-  // upstream for Kiro yet, so we skip them rather than firing a network fetch.
+  // payload as a string; for Uint8Array we encode here. URLs only reach us when
+  // the SDK's auto-fetch failed — surface, don't transmit.
   if (data instanceof Uint8Array) return Buffer.from(data).toString("base64")
   if (typeof data === "string") {
     const m = data.match(/^data:[^;]+;base64,(.+)$/)
-    return m ? m[1] : data
+    const candidate = (m ? m[1] : data).replace(/\s+/g, "")
+    // Reject obvious non-base64 (file paths, raw URLs, junk strings) so AWS Q
+    // doesn't return an opaque decode error from a "string forwarded blindly".
+    if (!candidate || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(candidate)) return undefined
+    return candidate
   }
   return undefined
+}
+
+// MIME type may arrive as "image/png; charset=utf-8" or with stray spaces;
+// strip parameters and lowercase before the exact-match lookup, or a perfectly
+// valid PNG falls into the unsupported branch.
+function normMediaType(mt: unknown): string {
+  return String(mt ?? "").split(";")[0]!.trim().toLowerCase()
+}
+
+// AWS Q (and Bedrock) require document names that are unique within a request
+// and constrained to a small charset. Two unnamed docs (or two `spec.pdf`s)
+// both serialized as "spec" would be rejected. Sanitize to the safe charset
+// (Bedrock-documented), strip the extension, cap at 200, and dedupe with -2,-3.
+function sanitizeDocName(raw: string, taken: Set<string>): string {
+  const noExt = raw.replace(/\.[^.]+$/, "")
+  const cleaned = noExt.replace(/[^a-zA-Z0-9\-()\[\]_\s]/g, "_").trim()
+  const base = (cleaned.slice(0, 200) || "document").replace(/^_+|_+$/g, "") || "document"
+  if (!taken.has(base)) return base
+  for (let i = 2; ; i++) {
+    const cand = `${base.slice(0, 197)}-${i}`
+    if (!taken.has(cand)) return cand
+  }
 }
 
 interface KiroAttachments {
@@ -283,17 +309,24 @@ interface KiroAttachments {
   documents: { name: string; format: string; source: { bytes: string } }[]
 }
 
+// AWS Q caps user images per message at 20 (Bedrock-documented; Q inherits).
+// More than that returns an opaque ValidationException — refuse client-side and
+// surface a marker so the user sees what was dropped.
+const MAX_IMAGES_PER_MESSAGE = 20
+
 function partsToContent(parts: AnyPart[]): KiroAttachments {
   const text: string[] = []
   const images: KiroAttachments["images"] = []
   const documents: KiroAttachments["documents"] = []
+  const docNames = new Set<string>()
+  let droppedImages = 0
   for (const p of parts) {
     if (p.type === "text") {
       if (typeof p.text === "string") text.push(p.text)
       continue
     }
     if (p.type !== "file") continue
-    const mt = String(p.mediaType ?? "").toLowerCase()
+    const mt = normMediaType(p.mediaType)
     const bytes = fileBytesBase64(p.data)
     if (!bytes) {
       text.push(`[unsupported attachment: ${mt || "unknown source"}]`)
@@ -301,18 +334,25 @@ function partsToContent(parts: AnyPart[]): KiroAttachments {
     }
     const ifmt = IMAGE_FORMAT[mt]
     if (ifmt) {
+      if (images.length >= MAX_IMAGES_PER_MESSAGE) {
+        droppedImages++
+        continue
+      }
       images.push({ format: ifmt, source: { bytes } })
       continue
     }
     const dfmt = DOC_FORMAT[mt]
     if (dfmt) {
       const rawName = typeof p.filename === "string" ? p.filename : "document"
-      const name = rawName.replace(/\.[^.]+$/, "").slice(0, 64) || "document"
+      const name = sanitizeDocName(rawName, docNames)
+      docNames.add(name)
       documents.push({ name, format: dfmt, source: { bytes } })
       continue
     }
     text.push(`[unsupported attachment: ${mt || "unknown"}]`)
   }
+  if (droppedImages > 0)
+    text.push(`[${droppedImages} additional image attachment(s) dropped: max ${MAX_IMAGES_PER_MESSAGE} per message]`)
   return { content: text.join("\n"), images, documents }
 }
 
@@ -353,9 +393,21 @@ function toolResultOutput(result: any): string {
     case "execution-denied":
       return result.reason ?? "(execution denied)"
     case "content":
+      // AWS Q's ToolResultContentBlock is text/JSON only — it has no image or
+      // file member — so we cannot send the bytes through the tool channel.
+      // Surface a placeholder per non-text item so the model at least KNOWS
+      // something was there instead of silently dropping it. (Up the stack the
+      // session pipeline lifts media-bearing tool results into a follow-on
+      // user message via message-v2.ts; this protects the leftover path.)
       return result.value
-        .filter((v: AnyPart) => v.type === "text")
-        .map((v: AnyPart) => v.text)
+        .map((v: AnyPart) => {
+          if (v.type === "text") return v.text
+          const t = String(v.type ?? "")
+          if (t === "image" || t.startsWith("image-")) return `[image]`
+          if (t === "file" || t.startsWith("file-")) return `[file: ${v.mediaType ?? "unknown"}]`
+          return ""
+        })
+        .filter(Boolean)
         .join("\n")
     default:
       return String(result.value ?? "")
