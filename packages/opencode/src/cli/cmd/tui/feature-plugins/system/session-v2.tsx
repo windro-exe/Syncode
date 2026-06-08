@@ -511,6 +511,9 @@ function AssistantTool(props: { part: SessionMessageAssistantTool; sessionID: st
       <Match when={props.part.name === "task"}>
         <Task {...toolprops} />
       </Match>
+      <Match when={props.part.name === "council"}>
+        <CouncilSpawn {...toolprops} />
+      </Match>
       <Match when={true}>
         <GenericTool {...toolprops} />
       </Match>
@@ -1055,6 +1058,59 @@ function Task(props: ToolProps) {
     >
       {content()}
     </InlineTool>
+  )
+}
+
+// Council render: shows the brief + every member's role + agent + session id.
+// Each member row is the same shape as the inline Task render so the user
+// recognizes them as subagent-like blocks. The session ids are visible so the
+// user can navigate to a member's session via the sidebar / session list.
+function CouncilSpawn(props: ToolProps) {
+  const { theme } = useTheme()
+  const brief = createMemo(() => stringValue(props.input.brief) ?? pendingInput(props.part))
+  // Members come from the tool's metadata after spawn returns. Before that
+  // (status: pending / running input) we show "Spawning council..." instead.
+  const members = createMemo(() => {
+    const raw = props.metadata.members
+    if (!Array.isArray(raw)) return [] as Array<{ role: string; agent: string; sessionID: string }>
+    return raw.flatMap((m) =>
+      isRecord(m) && typeof m.role === "string" && typeof m.agent === "string" && typeof m.sessionID === "string"
+        ? [{ role: m.role, agent: m.agent, sessionID: m.sessionID }]
+        : [],
+    )
+  })
+  const councilID = createMemo(() => stringValue(props.metadata.council_id) ?? "pending")
+  const title = createMemo(() => `# Council ${councilID()} · ${members().length || (Array.isArray(props.input.members) ? props.input.members.length : 0)} members`)
+  return (
+    <Show
+      when={members().length > 0 || brief()}
+      fallback={
+        <InlineTool icon="◇" pending="Spawning council..." complete={toolComplete(props.part)} part={props.part}>
+          Council
+        </InlineTool>
+      }
+    >
+      <BlockTool title={title()} part={props.part}>
+        <box gap={1}>
+          <text fg={theme.text}>Brief: {brief()}</text>
+          <Show when={members().length > 0}>
+            <box gap={0}>
+              <For each={members()}>
+                {(m) => (
+                  <text fg={theme.textMuted}>
+                    │ {Locale.titlecase(m.agent)} — {m.role}{" "}
+                    <text fg={theme.text}>{m.sessionID}</text>
+                  </text>
+                )}
+              </For>
+            </box>
+          </Show>
+          <text fg={theme.textMuted}>
+            (Member sessions run in parallel. Their progress is auto-injected into the chair's context each turn.)
+          </text>
+        </box>
+      </BlockTool>
+    </Show>
   )
 }
 

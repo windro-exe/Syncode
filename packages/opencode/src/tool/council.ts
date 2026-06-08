@@ -4,9 +4,6 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./council.txt"
 import { Council } from "@/council"
 import { CouncilError } from "@/council/types"
-import { Session } from "@/session/session"
-import { PartID } from "@/session/schema"
-import * as MessageV2 from "@/session/message-v2"
 
 const MemberSpec = Schema.Struct({
   role: Schema.String.annotate({
@@ -27,13 +24,13 @@ export const Parameters = Schema.Struct({
 type Metadata = {
   council_id: string
   member_count: number
+  members?: Array<{ role: string; agent: string; sessionID: string }>
 }
 
 export const CouncilTool = Tool.define(
   "council",
   Effect.gen(function* () {
     const council = yield* Council.Service
-    const sessions = yield* Session.Service
 
     const run = Effect.fn("CouncilTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -58,29 +55,19 @@ export const CouncilTool = Tool.define(
           ),
         )
 
-      // Emit one `subtask` part per member, attached to the chair's current
-      // assistant message. This is what makes the member sessions render in
-      // the TUI like task-spawned subagents (clickable, expandable, with the
-      // member's session id resolvable). Without this, the TUI only shows the
-      // single ⚙ council tool-call icon and the running members are invisible.
-      for (const member of result.members) {
-        const promptForMember = params.members.find((p) => p.role === member.role)?.prompt ?? ""
-        yield* sessions
-          .updatePart({
-            id: PartID.ascending(),
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
-            type: "subtask",
-            agent: member.agent,
-            description: `[${member.role}] ${params.brief.slice(0, 80)}`,
-            prompt: promptForMember,
-          } as MessageV2.SubtaskPart)
-          .pipe(Effect.ignore)
-      }
-
       yield* ctx.metadata({
         title: `council ${result.councilID}`,
-        metadata: { council_id: result.councilID, member_count: result.members.length },
+        metadata: {
+          council_id: result.councilID,
+          member_count: result.members.length,
+          // The Council TUI render (session-v2.tsx) reads this list to show
+          // each member as a clickable row with role + agent + session id.
+          members: result.members.map((m) => ({
+            role: m.role,
+            agent: m.agent,
+            sessionID: m.sessionID,
+          })),
+        } as Metadata,
       })
       const lines = [
         `Council ${result.councilID} spawned with ${result.members.length} members:`,
@@ -90,7 +77,15 @@ export const CouncilTool = Tool.define(
         "auto-injected into your context at the start of each turn. Use council_view to fetch the",
         "current table on demand, council_post to inject guidance, council_close when ready.",
       ]
-      return { title: `council ${result.councilID}`, output: lines.join("\n"), metadata: { council_id: result.councilID, member_count: result.members.length } }
+      return {
+        title: `council ${result.councilID}`,
+        output: lines.join("\n"),
+        metadata: {
+          council_id: result.councilID,
+          member_count: result.members.length,
+          members: result.members.map((m) => ({ role: m.role, agent: m.agent, sessionID: m.sessionID })),
+        } as Metadata,
+      }
     })
     return {
       description: DESCRIPTION,
