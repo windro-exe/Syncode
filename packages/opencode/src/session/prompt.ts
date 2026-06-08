@@ -1559,7 +1559,7 @@ export const layer = Layer.effect(
               const block = yield* sys.recall({
                 query: queryText,
                 sessionID,
-                skipPaths: ["/memories/agent.md", "/memories/_plan.md"],
+                skipPaths: ["/memories/agent.md", "/memories/_plan.md", "/memories/councils/"],
               })
               if (block)
                 recallUser.parts.push({

@@ -578,12 +578,21 @@ export const layer = Layer.effect(
                 ),
                 Effect.map((result) => result.parts.findLast((p) => p.type === "text")?.text ?? ""),
                 Effect.catchCause((cause) =>
-                  Effect.sync(() => {
+                  Effect.gen(function* () {
                     log.error("council member loop failed", {
                       cause: String(cause).slice(0, 200),
                       council: id,
                       role: k.role,
                     })
+                    // Flip the member's status to "stuck" so the council can
+                    // still auto-close when the rest are done. Without this,
+                    // a crashed member sits at "thinking" forever and blocks
+                    // the all-done check until the wallclock timeout fires.
+                    yield* declareStuck({
+                      councilID: id,
+                      sessionID: k.sessionID,
+                      why: `member loop failed: ${String(cause).slice(0, 200)}`,
+                    }).pipe(Effect.ignore)
                     return ""
                   }),
                 ),
