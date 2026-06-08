@@ -1,0 +1,21 @@
+Spawn a COUNCIL — a small team (2-7) of agent members that work IN PARALLEL on one complex task with shared visibility into each other's work. Use when a task is genuinely too big for a single agent and benefits from specialists collaborating.
+
+A council differs from `task` (single subagent):
+- Multiple members run at the same time, each with their own role.
+- Members can see each other's progress via `council_view` and post findings/questions to a shared table via `council_post`.
+- The chair (you, the parent) sees every member's activity injected into your context as it happens.
+- This tool returns IMMEDIATELY with a council_id; the council keeps running in the background while you keep working.
+
+Each member must be given a clear specialized role and a focused task prompt. Don't spawn a council for work one agent can do — use `task` instead. Don't make members do overlapping work — assign distinct roles.
+
+Parameters:
+- `brief`: the high-level task all members share (1-3 sentences).
+- `members[]`: 2 to 7 members, each with:
+  - `role`: short slug identifying this member (e.g. "researcher", "architect", "critic"). Must be unique within the council.
+  - `agent_type`: which agent to use (e.g. "general", "explore"). Must be a valid subagent type.
+  - `prompt`: this member's specific task — what they should focus on.
+- `timeout_seconds` (optional, default 600): hard cap; council auto-closes after this much wallclock time.
+
+The council closes when (a) every member calls `council_done`, (b) you call `council_close`, or (c) the timeout fires. After that you can synthesize the final answer from the table you've been seeing in your context.
+
+Use `council_view` to fetch the table on-demand. Use `council_post` to inject guidance into a running council. Use `council_close` to seal it before all members finish.

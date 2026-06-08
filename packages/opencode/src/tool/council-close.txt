@@ -1,0 +1,12 @@
+Close a council. Only the chair (parent that spawned the council) can call this.
+
+Use this when:
+- You have everything you need from the council (all the answers, enough findings to synthesize) and don't want to wait for any straggling members.
+- A council member is stuck and you've decided to wrap up rather than wait.
+- The work has changed direction and the council is no longer useful.
+
+Once closed, all running member loops are cancelled. Their session histories remain on disk and can still be inspected via the table — closing only stops new activity. The chair (you) then synthesizes the final answer from the table the parent has been seeing.
+
+Parameters:
+- `council_id` (optional): which council to close. Default: your most recently spawned council.
+- `reason` (optional): short reason recorded in the bus event for observability.

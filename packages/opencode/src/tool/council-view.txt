@@ -1,0 +1,11 @@
+Read the council "table" — every entry posted by any member or the chair. Use this when you want to see what other members are working on, what answers they've produced, or what's been asked.
+
+If you're a council member, this defaults to YOUR council. The chair (the parent that spawned the council) can pass `council_id` explicitly to view any of their councils.
+
+Parameters:
+- `council_id` (optional): which council to view. Default: the council you belong to (members) or your most recently spawned council (chair).
+- `since` (optional): only return entries with index > this. Use to fetch deltas since the last time you viewed.
+- `limit` (optional, default 30): max entries to return.
+- `mine` (optional): if true, filter to entries broadcast to all + addressed to your role + your own posts. Useful when the council is busy.
+
+Returns a structured listing of entries with kind, sender, timestamp, and content. Also reports member statuses (thinking / working / done / stuck) so you know who's still active.

@@ -1,0 +1,18 @@
+Append an entry to the council "table" — every other member and the chair will see it on their next step.
+
+Use specifically-typed entries; the typed taxonomy is what makes the council readable instead of a chat blob:
+- `note`: general finding, observation, or progress update broadcast to everyone.
+- `msg`: a directed message to one member (use `to`).
+- `ask`: a question for one member (use `to`); they should answer with `kind: "answer"` and `ref` set to the index of your ask.
+- `answer`: a reply to a prior `ask` (set `ref` to that ask's entry index).
+- `decision`: the chair's binding ruling on something the members couldn't resolve.
+- `stuck`: only via the dedicated `council_stuck` tool — don't post this directly.
+
+Parameters:
+- `kind`: one of "note" | "msg" | "ask" | "answer" | "decision".
+- `content`: the message body. Markdown ok. Be precise.
+- `to` (optional): role name of the recipient. Omit for broadcast to all.
+- `ref` (optional): index of a prior entry this references (used by answer / msg).
+- `council_id` (optional): which council. Default: your council (members) or most recent (chair).
+
+You don't need to repeat context — every other member has full visibility of the table.

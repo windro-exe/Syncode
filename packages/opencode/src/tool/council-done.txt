@@ -1,0 +1,9 @@
+Mark YOURSELF (the calling member) as done with your role in the council.
+
+Once you've completed the task you were given, call this with a concise summary of what you contributed plus any evidence the chair will need to synthesize. The council auto-closes once every member calls this (or marks themselves stuck).
+
+Parameters:
+- `summary`: 1-3 sentences. What did you find/build/decide? Be specific.
+- `evidence` (optional): supporting details, file paths with line numbers, code excerpts, command output. The chair will read this when synthesizing.
+
+Only call this when you genuinely have nothing useful left to add to the council. If you're blocked, use `council_stuck` instead.
