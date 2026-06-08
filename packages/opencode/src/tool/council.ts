@@ -4,6 +4,9 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./council.txt"
 import { Council } from "@/council"
 import { CouncilError } from "@/council/types"
+import { Session } from "@/session/session"
+import { PartID } from "@/session/schema"
+import * as MessageV2 from "@/session/message-v2"
 
 const MemberSpec = Schema.Struct({
   role: Schema.String.annotate({
@@ -30,6 +33,7 @@ export const CouncilTool = Tool.define(
   "council",
   Effect.gen(function* () {
     const council = yield* Council.Service
+    const sessions = yield* Session.Service
 
     const run = Effect.fn("CouncilTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -53,6 +57,27 @@ export const CouncilTool = Tool.define(
             Effect.fail(new CouncilError({ message: `failed to spawn council: ${String(cause).slice(0, 300)}` })),
           ),
         )
+
+      // Emit one `subtask` part per member, attached to the chair's current
+      // assistant message. This is what makes the member sessions render in
+      // the TUI like task-spawned subagents (clickable, expandable, with the
+      // member's session id resolvable). Without this, the TUI only shows the
+      // single ⚙ council tool-call icon and the running members are invisible.
+      for (const member of result.members) {
+        const promptForMember = params.members.find((p) => p.role === member.role)?.prompt ?? ""
+        yield* sessions
+          .updatePart({
+            id: PartID.ascending(),
+            sessionID: ctx.sessionID,
+            messageID: ctx.messageID,
+            type: "subtask",
+            agent: member.agent,
+            description: `[${member.role}] ${params.brief.slice(0, 80)}`,
+            prompt: promptForMember,
+          } as MessageV2.SubtaskPart)
+          .pipe(Effect.ignore)
+      }
+
       yield* ctx.metadata({
         title: `council ${result.councilID}`,
         metadata: { council_id: result.councilID, member_count: result.members.length },
