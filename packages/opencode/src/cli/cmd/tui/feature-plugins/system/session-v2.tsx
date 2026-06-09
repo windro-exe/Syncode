@@ -511,9 +511,6 @@ function AssistantTool(props: { part: SessionMessageAssistantTool; sessionID: st
       <Match when={props.part.name === "task"}>
         <Task {...toolprops} />
       </Match>
-      <Match when={props.part.name === "council"}>
-        <CouncilSpawn {...toolprops} />
-      </Match>
       <Match when={true}>
         <GenericTool {...toolprops} />
       </Match>
@@ -1058,48 +1055,6 @@ function Task(props: ToolProps) {
     >
       {content()}
     </InlineTool>
-  )
-}
-
-// Council render: each spawned member appears as its own inline subagent
-// row (same shape as `task` subagents) so the chair sees N rows for N
-// members under one council tool call. Member sessions are real child
-// sessions of the chair (parentID = chair_session_id) — drill-in via the
-// existing sidebar / session-list works for free.
-function CouncilSpawn(props: ToolProps) {
-  const brief = createMemo(() => stringValue(props.input.brief) ?? pendingInput(props.part))
-  const members = createMemo(() => {
-    const raw = props.metadata.members
-    if (!Array.isArray(raw)) return [] as Array<{ role: string; agent: string; sessionID: string }>
-    return raw.flatMap((m) =>
-      isRecord(m) && typeof m.role === "string" && typeof m.agent === "string" && typeof m.sessionID === "string"
-        ? [{ role: m.role, agent: m.agent, sessionID: m.sessionID }]
-        : [],
-    )
-  })
-  return (
-    <Show
-      when={members().length > 0}
-      fallback={
-        <InlineTool icon="│" pending="Spawning council..." complete={toolComplete(props.part)} part={props.part}>
-          {`Council — ${brief()}`}
-        </InlineTool>
-      }
-    >
-      <For each={members()}>
-        {(m) => (
-          <InlineTool
-            icon="│"
-            spinner={props.part.state.status === "running"}
-            complete={toolComplete(props.part)}
-            pending="Spawning..."
-            part={props.part}
-          >
-            {`Council[${m.role}] — ${brief()}`}
-          </InlineTool>
-        )}
-      </For>
-    </Show>
   )
 }
 

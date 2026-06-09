@@ -42,7 +42,6 @@ import { SkillRouter } from "../../src/skill/router"
 import { Memory } from "../../src/memory/memory"
 import { Goal } from "../../src/session/goal"
 import { AutoMemory } from "../../src/session/auto-memory"
-import { Council } from "../../src/council"
 import { SystemPrompt } from "../../src/session/system"
 import { Shell } from "../../src/shell/shell"
 import { Snapshot } from "../../src/snapshot"
@@ -194,7 +193,6 @@ function makePrompt(input?: { processor?: "blocking" }) {
     SkillRouter.defaultLayer,
     Goal.defaultLayer,
     AutoMemory.defaultLayer,
-    Council.defaultLayer,
   ).pipe(Layer.provideMerge(infra))
   const question = Question.layer.pipe(Layer.provideMerge(deps))
   const todo = Todo.layer.pipe(Layer.provideMerge(deps))

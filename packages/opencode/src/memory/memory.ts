@@ -588,10 +588,6 @@ export const layer = Layer.effect(
     const recall: Interface["recall"] = Effect.fn("Memory.recall")(function* (input) {
       const limit = Math.max(1, Math.min(input.limit ?? 3, 8))
       const skip = new Set(input.skipPaths ?? [])
-      // Entries in skipPaths ending with "/" are treated as PREFIX matches —
-      // e.g. "/memories/councils/" excludes every council JSON file. Bare
-      // entries are exact-path matches (e.g. "/memories/agent.md").
-      const skipPrefixes = (input.skipPaths ?? []).filter((p) => p.endsWith("/"))
       // Gate out trivial/stopword-only turns so recall doesn't surface random
       // memories on "ok" / "yes" / "continue". Require at least two meaningful
       // words, and search only those.
@@ -616,9 +612,7 @@ export const layer = Layer.effect(
       // FTS MATCH already filters to entries sharing a query term, and search()
       // ranks them by the composite score; take the top-k. (No absolute BM25
       // floor — BM25 is corpus-scale-dependent and degenerate on tiny stores.)
-      const relevant = hits
-        .filter((h) => !skip.has(h.entry.path) && !skipPrefixes.some((pre) => h.entry.path.startsWith(pre)))
-        .slice(0, limit)
+      const relevant = hits.filter((h) => !skip.has(h.entry.path)).slice(0, limit)
       if (relevant.length === 0) return undefined
       const lines = [
         `<recalled-memory note="Automatically surfaced from your memory; may be relevant to this turn. Not the user's words.">`,

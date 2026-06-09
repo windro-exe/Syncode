@@ -20,7 +20,6 @@ import { SkillActive } from "@/skill/active"
 import { Goal } from "@/session/goal"
 import { Ephemeral } from "@/session/ephemeral"
 import { AutoMemory } from "@/session/auto-memory"
-import { Council } from "@/council"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
@@ -170,15 +169,6 @@ export const layer = Layer.effect(
     const skillActive = yield* SkillActive.Service
     const goal = yield* Goal.Service
     const autoMemory = yield* AutoMemory.Service
-    const council = yield* Council.Service
-    // Per-(session, councilID) map of last entry index this session has seen
-    // for that specific council. Step-start council injection only delivers
-    // DELTAS (entries newer than the last view). Keyed by both session AND
-    // council because a chair can have multiple active councils, each with
-    // its own monotonic index space — keying by sessionID alone caused later
-    // councils to silently truncate earlier councils' entries.
-    const councilLastView = new Map<string, number>()
-    const councilLastViewKey = (sid: SessionID, cid: string) => `${sid}\x00${cid}`
     // Sessions already nudged to persist state at the 60% soft checkpoint, so
     // the reminder fires once per session (when context first crosses 60%)
     // rather than only on step 1.
@@ -1559,7 +1549,7 @@ export const layer = Layer.effect(
               const block = yield* sys.recall({
                 query: queryText,
                 sessionID,
-                skipPaths: ["/memories/agent.md", "/memories/_plan.md", "/memories/councils/"],
+                skipPaths: ["/memories/agent.md", "/memories/_plan.md"],
               })
               if (block)
                 recallUser.parts.push({
@@ -1570,82 +1560,6 @@ export const layer = Layer.effect(
                   text: block,
                   synthetic: true,
                 })
-            }
-          }
-
-          // Council step-start injection. If this session is a council member
-          // OR a chair (parent) of any active council, inject deltas since the
-          // last view as a synthetic text part on the latest user message.
-          // Cache-safe (never touches the system prefix). Tracked per
-          // (session, council) so a chair with multiple councils sees each
-          // council's deltas correctly. Disable with OPENCODE_COUNCIL_INJECT=0.
-          if (process.env["OPENCODE_COUNCIL_INJECT"] !== "0") {
-            const councilUser = msgs.findLast((m) => m.info.role === "user")
-            if (councilUser) {
-              const blocks: string[] = []
-              const seenInThisTurn = new Set<string>()
-              const inject = Effect.fn("SessionPrompt.injectCouncil")(function* (councilID: string, role: "member" | "chair") {
-                if (seenInThisTurn.has(councilID)) return
-                seenInThisTurn.add(councilID)
-                const key = councilLastViewKey(sessionID, councilID)
-                const lastSeen = councilLastView.get(key) ?? -1
-                const view = yield* council
-                  .view({
-                    councilID,
-                    sinceIndex: lastSeen >= 0 ? lastSeen : undefined,
-                    limit: 30,
-                    ...(role === "member" ? { filterFor: sessionID } : {}),
-                  })
-                  .pipe(Effect.option)
-                if (view._tag === "None") return
-                const v = view.value
-                if (v.entries.length === 0 && lastSeen >= 0) return
-                const lines: string[] = []
-                lines.push(
-                  `<council-update council="${v.state.id}" role="${role}" status="${v.state.status}">`,
-                )
-                if (role === "chair") {
-                  lines.push(`brief: ${v.state.brief}`)
-                  lines.push("members:")
-                  for (const m of v.state.members) {
-                    lines.push(`  - [${m.status}] ${m.role} (${m.agent})${m.summary ? ` — ${m.summary}` : ""}`)
-                  }
-                }
-                if (v.rotatedCount > 0) lines.push(`(${v.rotatedCount} earlier entries archived)`)
-                if (v.entries.length === 0) {
-                  lines.push("(no new entries since last view)")
-                } else {
-                  lines.push(`new entries (${v.entries.length}):`)
-                  for (const e of v.entries) {
-                    const addr = e.to ? ` → ${e.to}` : ""
-                    const refs = e.refIndex !== undefined ? ` (re: #${e.refIndex})` : ""
-                    lines.push(`#${e.i} ${e.from} · ${e.kind}${addr}${refs}`)
-                    for (const ln of e.content.split("\n")) lines.push(`  ${ln}`)
-                  }
-                  // Bump the per-(session, council) high-water mark so the
-                  // next turn only delivers strictly-newer entries.
-                  const maxIndex = v.entries[v.entries.length - 1]!.i
-                  councilLastView.set(key, Math.max(lastSeen, maxIndex))
-                }
-                lines.push("</council-update>")
-                blocks.push(lines.join("\n"))
-              })
-
-              const membership = yield* council.membership(sessionID)
-              if (membership) yield* inject(membership.councilID, "member")
-              const chaired = yield* council.councilsFor(sessionID)
-              for (const c of chaired) yield* inject(c.id, "chair")
-
-              if (blocks.length > 0) {
-                councilUser.parts.push({
-                  id: PartID.ascending(),
-                  messageID: councilUser.info.id,
-                  sessionID: councilUser.info.sessionID,
-                  type: "text",
-                  text: blocks.join("\n\n"),
-                  synthetic: true,
-                })
-              }
             }
           }
 
@@ -2031,7 +1945,6 @@ export const defaultLayer = Layer.suspend(() =>
         SkillActive.defaultLayer,
         Goal.defaultLayer,
         AutoMemory.defaultLayer,
-        Council.defaultLayer,
       ),
     ),
   ),

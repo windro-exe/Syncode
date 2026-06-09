@@ -79,41 +79,6 @@ describe("memory.recall", () => {
     }),
   )
 
-  it.instance("treats skipPaths ending with / as prefix matches", () =>
-    Effect.gen(function* () {
-      const memory = yield* Memory.Service
-      const sid = yield* newSession
-      // Two files under a "councils" directory.
-      yield* memory.create({
-        scope: "session",
-        path: "/memories/councils/cou_aaa.json",
-        content: "JWT council brief",
-        ctx: { sessionID: sid },
-      })
-      yield* memory.create({
-        scope: "session",
-        path: "/memories/councils/cou_bbb.json",
-        content: "more JWT discussion",
-        ctx: { sessionID: sid },
-      })
-      // A real memory file the user wants surfaced.
-      yield* memory.create({
-        scope: "session",
-        path: "/memories/topics/auth.md",
-        content: "JWT tokens are signed with RS256",
-        ctx: { sessionID: sid },
-      })
-      const block = yield* memory.recall({
-        query: "JWT signed tokens",
-        ctx: { sessionID: sid },
-        skipPaths: ["/memories/councils/"],
-      })
-      expect(block).toBeDefined()
-      expect(block).toContain("RS256")
-      expect(block).not.toContain("council")
-    }),
-  )
-
   it.instance("ignores trivial / stopword-only turns", () =>
     Effect.gen(function* () {
       const memory = yield* Memory.Service

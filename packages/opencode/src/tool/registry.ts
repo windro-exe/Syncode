@@ -62,13 +62,6 @@ import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Memory } from "@/memory/memory"
 import { Goal } from "@/session/goal"
-import { Council } from "@/council"
-import { CouncilTool } from "./council"
-import { CouncilViewTool } from "./council-view"
-import { CouncilPostTool } from "./council-post"
-import { CouncilDoneTool } from "./council-done"
-import { CouncilStuckTool } from "./council-stuck"
-import { CouncilCloseTool } from "./council-close"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -123,7 +116,6 @@ export const layer: Layer.Layer<
   | RuntimeFlags.Service
   | Memory.Service
   | Goal.Service
-  | Council.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -157,12 +149,6 @@ export const layer: Layer.Layer<
     const monitortool = yield* MonitorTool
     const contexttool = yield* ContextTool
     const goaltool = yield* GoalTool
-    const councilSpawn = yield* CouncilTool
-    const councilView = yield* CouncilViewTool
-    const councilPost = yield* CouncilPostTool
-    const councilDone = yield* CouncilDoneTool
-    const councilStuck = yield* CouncilStuckTool
-    const councilClose = yield* CouncilCloseTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -278,12 +264,6 @@ export const layer: Layer.Layer<
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
-          council: Tool.init(councilSpawn),
-          council_view: Tool.init(councilView),
-          council_post: Tool.init(councilPost),
-          council_done: Tool.init(councilDone),
-          council_stuck: Tool.init(councilStuck),
-          council_close: Tool.init(councilClose),
         })
 
         return {
@@ -312,12 +292,6 @@ export const layer: Layer.Layer<
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
-            tool.council,
-            tool.council_view,
-            tool.council_post,
-            tool.council_done,
-            tool.council_stuck,
-            tool.council_close,
           ],
           task: tool.task,
           read: tool.read,
@@ -426,9 +400,7 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Format.defaultLayer),
       Layer.provide(CrossSpawnSpawner.defaultLayer),
       Layer.provide(Ripgrep.defaultLayer),
-      Layer.provide(
-        Layer.mergeAll(Truncate.defaultLayer, Memory.defaultLayer, Goal.defaultLayer, Council.defaultLayer),
-      ),
+      Layer.provide(Layer.mergeAll(Truncate.defaultLayer, Memory.defaultLayer, Goal.defaultLayer)),
     )
     .pipe(Layer.provide(RuntimeFlags.defaultLayer)),
 )

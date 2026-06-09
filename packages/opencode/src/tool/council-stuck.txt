@@ -1,7 +1,0 @@
-Flag YOURSELF (the calling member) as stuck. Use this instead of `council_done` when you cannot make progress.
-
-The chair sees this immediately and can either redirect you (via `council_post` with kind: "msg") or close the council and proceed without you.
-
-Parameters:
-- `why`: one to three sentences describing what blocks you. Be specific — "I need X to proceed" beats "this is hard."
-- `need_help_with` (optional): the specific thing another member could help with — if a peer can unblock you, address it to them via `council_post(kind: "ask", to: "<role>", content: ...)` first.
