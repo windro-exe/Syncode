@@ -1061,15 +1061,13 @@ function Task(props: ToolProps) {
   )
 }
 
-// Council render: shows the brief + every member's role + agent + session id.
-// Each member row is the same shape as the inline Task render so the user
-// recognizes them as subagent-like blocks. The session ids are visible so the
-// user can navigate to a member's session via the sidebar / session list.
+// Council render: each spawned member appears as its own inline subagent
+// row (same shape as `task` subagents) so the chair sees N rows for N
+// members under one council tool call. Member sessions are real child
+// sessions of the chair (parentID = chair_session_id) — drill-in via the
+// existing sidebar / session-list works for free.
 function CouncilSpawn(props: ToolProps) {
-  const { theme } = useTheme()
   const brief = createMemo(() => stringValue(props.input.brief) ?? pendingInput(props.part))
-  // Members come from the tool's metadata after spawn returns. Before that
-  // (status: pending / running input) we show "Spawning council..." instead.
   const members = createMemo(() => {
     const raw = props.metadata.members
     if (!Array.isArray(raw)) return [] as Array<{ role: string; agent: string; sessionID: string }>
@@ -1079,37 +1077,28 @@ function CouncilSpawn(props: ToolProps) {
         : [],
     )
   })
-  const councilID = createMemo(() => stringValue(props.metadata.council_id) ?? "pending")
-  const title = createMemo(() => `# Council ${councilID()} · ${members().length || (Array.isArray(props.input.members) ? props.input.members.length : 0)} members`)
   return (
     <Show
-      when={members().length > 0 || brief()}
+      when={members().length > 0}
       fallback={
-        <InlineTool icon="◇" pending="Spawning council..." complete={toolComplete(props.part)} part={props.part}>
-          Council
+        <InlineTool icon="│" pending="Spawning council..." complete={toolComplete(props.part)} part={props.part}>
+          {`Council — ${brief()}`}
         </InlineTool>
       }
     >
-      <BlockTool title={title()} part={props.part}>
-        <box gap={1}>
-          <text fg={theme.text}>Brief: {brief()}</text>
-          <Show when={members().length > 0}>
-            <box gap={0}>
-              <For each={members()}>
-                {(m) => (
-                  <text fg={theme.textMuted}>
-                    │ {Locale.titlecase(m.agent)} — {m.role}{" "}
-                    <text fg={theme.text}>{m.sessionID}</text>
-                  </text>
-                )}
-              </For>
-            </box>
-          </Show>
-          <text fg={theme.textMuted}>
-            (Member sessions run in parallel. Their progress is auto-injected into the chair's context each turn.)
-          </text>
-        </box>
-      </BlockTool>
+      <For each={members()}>
+        {(m) => (
+          <InlineTool
+            icon="│"
+            spinner={props.part.state.status === "running"}
+            complete={toolComplete(props.part)}
+            pending="Spawning..."
+            part={props.part}
+          >
+            {`Council[${m.role}] — ${brief()}`}
+          </InlineTool>
+        )}
+      </For>
     </Show>
   )
 }

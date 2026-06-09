@@ -66,8 +66,18 @@ const newSession = Effect.gen(function* () {
 
 const ref = { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") }
 const validMembers = [
-  { role: "researcher", agent: "general", prompt: "find the answer", model: ref },
-  { role: "architect", agent: "general", prompt: "design the solution", model: ref },
+  {
+    role: "researcher",
+    system_prompt: "You are a researcher.",
+    prompt: "find the answer",
+    model: ref,
+  },
+  {
+    role: "architect",
+    system_prompt: "You are an architect.",
+    prompt: "design the solution",
+    model: ref,
+  },
 ]
 
 describe("council", () => {
@@ -80,7 +90,7 @@ describe("council", () => {
           parentSessionID: sid,
           chairAgent: "general",
           brief: "test",
-          members: [{ role: "solo", agent: "general", prompt: "do it alone" }],
+          members: [{ role: "solo", system_prompt: "solo agent", prompt: "do it alone" }],
           promptOps: fakeOps,
         })
         .pipe(Effect.option)
@@ -94,7 +104,7 @@ describe("council", () => {
       const sid = yield* newSession
       const tooMany = Array.from({ length: 8 }, (_, i) => ({
         role: `r${i}`,
-        agent: "general",
+        system_prompt: "x",
         prompt: "x",
       }))
       const result = yield* council
@@ -120,8 +130,8 @@ describe("council", () => {
           chairAgent: "general",
           brief: "test",
           members: [
-            { role: "same", agent: "general", prompt: "a" },
-            { role: "same", agent: "general", prompt: "b" },
+            { role: "same", system_prompt: "x", prompt: "a" },
+            { role: "same", system_prompt: "x", prompt: "b" },
           ],
           promptOps: fakeOps,
         })

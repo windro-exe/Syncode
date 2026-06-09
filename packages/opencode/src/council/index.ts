@@ -73,9 +73,24 @@ export interface SpawnInput {
   timeoutMs?: number
   members: ReadonlyArray<{
     role: string
-    agent: string
+    // Chair-crafted custom system prompt for this member. The chair
+    // typically web-researches the role first to draft this. Required —
+    // the whole point of council is custom-built agents per task.
+    system_prompt: string
+    // Per-member task — what THIS member should focus on.
     prompt: string
+    // Tool allowlist for this member (passed through to the child session's
+    // permission ruleset as allow rules). Optional — if omitted, member
+    // inherits the deriveSubagentSessionPermission default + council allows.
+    tools_allow?: ReadonlyArray<string>
+    // Tool denylist — explicit deny on top of the default.
+    tools_deny?: ReadonlyArray<string>
+    // Optional per-member model override. Falls back to chair's model.
     model?: { providerID: ProviderID; modelID: ModelID }
+    // Optional explicit identifier ("explore", "general") if the chair just
+    // wants to use an existing preset for this member instead of crafting.
+    // Kept for the simple-case escape hatch; ignored when system_prompt set.
+    preset_agent?: string
   }>
   // Provided by the calling tool from ctx.extra.promptOps. Required to start
   // the member loops. Not stored on the service — spawning is bound to a
@@ -164,6 +179,9 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Co
 interface Runtime {
   semaphore: Semaphore.Semaphore
   memberJobs: Set<SessionID>
+  // Ephemeral agent names registered for this council's members so close()
+  // can unregister them and avoid leaking entries in the agent registry.
+  ephemeralAgents: Set<string>
 }
 
 interface InternalState {
@@ -378,6 +396,11 @@ export const layer = Layer.effect(
           if (input.skipSession && sid === input.skipSession) continue
           yield* runState.cancel(sid).pipe(Effect.ignore)
         }
+        // Drop the ephemeral chair-crafted agents so they don't leak in the
+        // registry. Agent.unregister is a no-op if the agent isn't registered.
+        for (const name of r.ephemeralAgents) {
+          yield* agents.unregister(name).pipe(Effect.ignore)
+        }
       }
       // Drop hot membership entries for this council so post-close tool calls
       // from the (now-cancelled) member sessions return cleanly.
@@ -420,9 +443,20 @@ export const layer = Layer.effect(
         if (roles.has(m.role)) return yield* new CouncilError({ message: `duplicate role: ${m.role}` })
         roles.add(m.role)
       }
+      // Validate preset agent references up front. Custom (system_prompt) members
+      // need no preset.
       for (const m of input.members) {
-        const ok = yield* agents.get(m.agent).pipe(Effect.option)
-        if (ok._tag === "None") return yield* new CouncilError({ message: `unknown agent: ${m.agent}` })
+        if (m.preset_agent) {
+          const ok = yield* agents.get(m.preset_agent).pipe(Effect.option)
+          if (ok._tag === "None") {
+            return yield* new CouncilError({ message: `unknown preset agent: ${m.preset_agent}` })
+          }
+        }
+        if (!m.system_prompt && !m.preset_agent) {
+          return yield* new CouncilError({
+            message: `member ${m.role} needs either system_prompt (chair-crafted) or preset_agent`,
+          })
+        }
       }
 
       const id = Identifier.ascending("council")
@@ -456,7 +490,10 @@ export const layer = Layer.effect(
       ]
 
       // Create child sessions for each member up front so the initial state
-      // file has the full member roster. Loops are kicked off afterwards.
+      // file has the full member roster. Each member with a chair-crafted
+      // system_prompt gets an ephemeral agent registered for it; preset
+      // members keep their existing agent reference. Loops are kicked off
+      // afterwards.
       const memberSpec: Member[] = []
       const memberKickoffs: Array<{
         sessionID: SessionID
@@ -465,12 +502,41 @@ export const layer = Layer.effect(
         prompt: string
         model: { providerID: ProviderID; modelID: ModelID }
       }> = []
+      const ephemeralAgentNames: string[] = []
       for (const m of input.members) {
         const model = m.model ?? parentModel
         if (!model) {
           return yield* new CouncilError({ message: `cannot resolve model for member ${m.role}` })
         }
-        const subagentInfo = yield* agents.get(m.agent)
+        // Build the per-member agent. If the chair drafted a system_prompt,
+        // register a fresh ephemeral agent named __council_<id>_<role> with
+        // that prompt + chair-crafted tool allow/deny rules + per-member
+        // model. Otherwise fall back to the named preset.
+        let agentName: string
+        let subagentInfo: Agent.Info
+        if (m.system_prompt) {
+          agentName = `__council_${id}_${m.role}`
+          const customPermission = [
+            ...(m.tools_allow ?? []).map((t) => ({ permission: t, pattern: "*", action: "allow" as const })),
+            ...(m.tools_deny ?? []).map((t) => ({ permission: t, pattern: "*", action: "deny" as const })),
+          ]
+          const ephemeral: Agent.Info = {
+            name: agentName,
+            description: `Council member [${m.role}] · chair-crafted at runtime`,
+            mode: "subagent",
+            hidden: true,
+            prompt: m.system_prompt,
+            permission: customPermission,
+            model,
+            options: {},
+          }
+          yield* agents.register(ephemeral).pipe(Effect.orDie)
+          ephemeralAgentNames.push(agentName)
+          subagentInfo = ephemeral
+        } else {
+          agentName = m.preset_agent!
+          subagentInfo = yield* agents.get(agentName)
+        }
         const childPermission: Permission.Ruleset = [
           ...deriveSubagentSessionPermission({
             parentSessionPermission: parent.permission ?? [],
@@ -492,12 +558,12 @@ export const layer = Layer.effect(
           )
         memberSpec.push({
           sessionID: child.id,
-          agent: m.agent,
+          agent: agentName,
           role: m.role,
           status: "thinking",
           spawnedAt: Date.now(),
         })
-        memberKickoffs.push({ sessionID: child.id, role: m.role, agent: m.agent, prompt: m.prompt, model })
+        memberKickoffs.push({ sessionID: child.id, role: m.role, agent: agentName, prompt: m.prompt, model })
       }
 
       const now = Date.now()
@@ -531,6 +597,7 @@ export const layer = Layer.effect(
       const runtime: Runtime = {
         semaphore: Semaphore.makeUnsafe(1),
         memberJobs: new Set(memberSpec.map((m) => m.sessionID)),
+        ephemeralAgents: new Set(ephemeralAgentNames),
       }
       s.runtimes.set(id, runtime)
       for (const m of memberSpec) s.members.set(m.sessionID, { councilID: id, role: m.role })
@@ -551,7 +618,7 @@ export const layer = Layer.effect(
           brief: input.brief,
           taskPrompt: k.prompt,
           councilID: id,
-          allRoles: input.members.map((m) => ({ role: m.role, agent: m.agent })),
+          allRoles: input.members.map((m) => ({ role: m.role })),
         })
         yield* background
           .start({
@@ -671,11 +738,11 @@ function formatMemberSeed(input: {
   brief: string
   taskPrompt: string
   councilID: string
-  allRoles: ReadonlyArray<{ role: string; agent: string }>
+  allRoles: ReadonlyArray<{ role: string }>
 }): string {
   const peers = input.allRoles
     .filter((r) => r.role !== input.role)
-    .map((r) => `- ${r.role} (${r.agent})`)
+    .map((r) => `- ${r.role}`)
     .join("\n")
   return [
     `You are part of a council collaborating on a complex task. Council ID: ${input.councilID}.`,

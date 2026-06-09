@@ -71,6 +71,12 @@ export interface Interface {
     },
     Provider.DefaultModelError
   >
+  // Register an ephemeral agent at runtime (chair-crafted council members,
+  // tool-callable agent factories, etc.). Returns void; idempotent on the
+  // exact same name. Refuses to overwrite a `native: true` built-in.
+  readonly register: (info: Info) => Effect.Effect<void>
+  // Drop a previously-registered ephemeral. Refuses native agents.
+  readonly unregister: (name: string) => Effect.Effect<void>
 }
 
 type State = Omit<Interface, "generate">
@@ -359,11 +365,29 @@ export const layer = Layer.effect(
           return (yield* defaultInfo()).name
         })
 
+        const register = Effect.fnUntraced(function* (info: Info) {
+          const existing = agents[info.name]
+          // Refuse to overwrite a built-in / native agent. Idempotent on the
+          // exact same ephemeral name (a council respawn of the same role
+          // shouldn't error if the previous one didn't get unregistered).
+          if (existing?.native) throw new Error(`cannot overwrite native agent: ${info.name}`)
+          agents[info.name] = info
+        })
+
+        const unregister = Effect.fnUntraced(function* (name: string) {
+          const existing = agents[name]
+          if (!existing) return
+          if (existing.native) throw new Error(`cannot unregister native agent: ${name}`)
+          delete agents[name]
+        })
+
         return {
           get,
           list,
           defaultInfo,
           defaultAgent,
+          register,
+          unregister,
         } satisfies State
       }),
     )
@@ -380,6 +404,12 @@ export const layer = Layer.effect(
       }),
       defaultAgent: Effect.fn("Agent.defaultAgent")(function* () {
         return yield* InstanceState.useEffect(state, (s) => s.defaultAgent())
+      }),
+      register: Effect.fn("Agent.register")(function* (info: Info) {
+        return yield* InstanceState.useEffect(state, (s) => s.register(info))
+      }),
+      unregister: Effect.fn("Agent.unregister")(function* (name: string) {
+        return yield* InstanceState.useEffect(state, (s) => s.unregister(name))
       }),
       generate: Effect.fn("Agent.generate")(function* (input: {
         description: string
