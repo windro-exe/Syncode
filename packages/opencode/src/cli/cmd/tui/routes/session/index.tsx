@@ -61,6 +61,7 @@ import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { DialogContext } from "../../component/dialog-context"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
@@ -563,11 +564,7 @@ export function Session() {
         name: "context",
       },
       run: () => {
-        prompt?.set({
-          input: "Report the current context window usage and per-category breakdown using the context tool.",
-          parts: [],
-        })
-        dialog.clear()
+        dialog.replace(() => <DialogContext sessionID={route.sessionID} />)
       },
     },
     {
