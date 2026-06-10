@@ -19,24 +19,26 @@ type Metadata = {
 
 const n = (x: number) => Math.round(x).toLocaleString("en-US")
 
-// Sum estimated tokens of either the text/reasoning parts or the completed
-// tool outputs across a set of messages, plus a count of how many parts.
-function estimate(messages: MessageV2.WithParts[], kind: "text" | "tool") {
-  let tokens = 0
-  let count = 0
-  for (const msg of messages) {
-    for (const part of msg.parts) {
-      if (kind === "text" && (part.type === "text" || part.type === "reasoning") && part.text.trim()) {
-        tokens += Token.estimate(part.text)
-        count++
-      } else if (kind === "tool" && part.type === "tool" && part.state.status === "completed" && part.state.output) {
-        tokens += Token.estimate(part.state.output)
-        count++
-      }
-    }
-  }
-  return { tokens, count }
-}
+// Sum tokens of either the text/reasoning parts or the completed tool outputs
+// across a set of messages, plus a count of how many parts. Uses the real
+// o200k BPE tokenizer (Token.count) — a model-agnostic proxy: close for
+// English/code, far better than the char heuristic, though still not the
+// provider's exact tokenizer (e.g. Claude). Sequential is fine here: /context
+// is user-invoked and infrequent, and the encoder is loaded once then cached.
+const tokenize = (messages: MessageV2.WithParts[], kind: "text" | "tool") =>
+  Effect.gen(function* () {
+    const strings = messages.flatMap((msg) =>
+      msg.parts.flatMap((part) => {
+        if (kind === "text" && (part.type === "text" || part.type === "reasoning") && part.text.trim())
+          return [part.text]
+        if (kind === "tool" && part.type === "tool" && part.state.status === "completed" && part.state.output)
+          return [part.state.output]
+        return []
+      }),
+    )
+    const counts = yield* Effect.forEach(strings, Token.count)
+    return { tokens: counts.reduce((sum, c) => sum + c, 0), count: strings.length }
+  })
 
 function lastAssistantTokens(messages: MessageV2.WithParts[]) {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -65,9 +67,11 @@ export const ContextTool = Tool.define<typeof Parameters, Metadata, Session.Serv
 
           const pruned = msgs.filter((m) => m.info.pruned)
           const visible = msgs.filter((m) => !m.info.pruned)
-          const text = estimate(visible, "text")
-          const tool = estimate(visible, "tool")
-          const prunedEst = estimate(pruned, "text").tokens + estimate(pruned, "tool").tokens
+          const text = yield* tokenize(visible, "text")
+          const tool = yield* tokenize(visible, "tool")
+          const prunedText = yield* tokenize(pruned, "text")
+          const prunedTool = yield* tokenize(pruned, "tool")
+          const prunedEst = prunedText.tokens + prunedTool.tokens
 
           const tokens = lastAssistantTokens(msgs)
           const prompt = tokens ? tokens.input + tokens.cache.read + tokens.cache.write : 0
@@ -102,7 +106,7 @@ export const ContextTool = Tool.define<typeof Parameters, Metadata, Session.Serv
             lines.push("")
           }
 
-          lines.push("Estimated breakdown (character heuristic):")
+          lines.push("Estimated breakdown (o200k tokenizer):")
           lines.push(`  conversation text: ${n(text.tokens)} (${text.count} parts)`)
           lines.push(`  tool output:       ${n(tool.tokens)} (${tool.count} calls)`)
           if (prompt > 0) {
