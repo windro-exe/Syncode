@@ -1,7 +1,7 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import * as Log from "@opencode-ai/core/util/log"
-import { Memory } from "@/memory/memory"
+import { Memory, splitSections } from "@/memory/memory"
 import { Session as SessionNs } from "@/session/session"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
@@ -114,4 +114,113 @@ describe("memory.recall", () => {
       expect(afterSearch[0]!.entry.reinforcement).toBeGreaterThan(0)
     }),
   )
+})
+
+describe("memory.search (FTS5 robustness)", () => {
+  it.instance("matches hyphenated/punctuated identifiers instead of returning zero (regression)", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory.Service
+      const sid = yield* newSession
+      yield* memory.create({
+        scope: "session",
+        path: "/memories/topics/virt.md",
+        title: "Virtualization",
+        content: "GameLoop's QMEmulatorService owns AMD-V at boot; SQLITE_ERROR codes and src/file.path refs.",
+        ctx: { sessionID: sid },
+      })
+      // A query containing punctuation (the hyphen in AMD-V) used to build a raw
+      // FTS5 MATCH that threw a syntax error, swallowed into zero results. It
+      // must now match via safely-quoted tokens.
+      const hits = yield* memory.search({ query: "QMEmulatorService AMD-V hypervisor", ctx: { sessionID: sid } })
+      expect(hits.some((h) => h.entry.path === "/memories/topics/virt.md")).toBe(true)
+    }),
+  )
+
+  it.instance("a punctuation-only query degrades to empty, not a crash", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory.Service
+      const sid = yield* newSession
+      yield* memory.create({
+        scope: "session",
+        path: "/memories/topics/x.md",
+        content: "some content",
+        ctx: { sessionID: sid },
+      })
+      const hits = yield* memory.search({ query: "  -  .  /  ", ctx: { sessionID: sid } })
+      expect(hits).toEqual([])
+    }),
+  )
+})
+
+describe("memory.recall hygiene", () => {
+  it.instance("dedups identical content so the same fact is not injected twice", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory.Service
+      const sid = yield* newSession
+      const dup = "Vulkan renders BGMI smoother than DirectX on this AMD iGPU stack."
+      yield* memory.create({ scope: "session", path: "/memories/topics/a.md", content: dup, ctx: { sessionID: sid } })
+      yield* memory.create({ scope: "session", path: "/memories/topics/b.md", content: dup, ctx: { sessionID: sid } })
+      const block = yield* memory.recall({ query: "Vulkan DirectX BGMI smoother", ctx: { sessionID: sid } })
+      expect(block).toBeDefined()
+      // two entries match, but identical content collapses to a single snippet
+      expect(block!.split("<snippet>").length - 1).toBe(1)
+    }),
+  )
+})
+
+describe("memory section-aware retrieval", () => {
+  it.instance("injects the matching section + breadcrumb, not the file head", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory.Service
+      const sid = yield* newSession
+      yield* memory.create({
+        scope: "session",
+        path: "/memories/topics/rig.md",
+        title: "Rig",
+        content: [
+          "# Rig",
+          "",
+          "## Display",
+          "1440p 165Hz panel, G-Sync off for latency.",
+          "",
+          "## Storage",
+          "The NVMe boot drive is a Samsung 990 Pro 2TB with heatsink.",
+        ].join("\n"),
+        ctx: { sessionID: sid },
+      })
+      const block = yield* memory.recall({ query: "which NVMe boot drive Samsung", ctx: { sessionID: sid } })
+      expect(block).toBeDefined()
+      expect(block).toContain("990 Pro") // the Storage section was surfaced
+      expect(block).toContain("Storage") // its breadcrumb is included
+      expect(block).not.toContain("G-Sync") // the unrelated Display/head section was NOT injected
+    }),
+  )
+})
+
+describe("splitSections", () => {
+  test("does not treat # lines inside fenced code blocks as headings", () => {
+    const content = [
+      "# Setup",
+      "intro",
+      "## Commands",
+      "```sh",
+      "# install deps (shell comment, NOT a heading)",
+      "npm i",
+      "```",
+      "trailing note",
+    ].join("\n")
+    const secs = splitSections("Guide", content)
+    // the "# install deps" line is inside a fence -> must not spawn its own section
+    expect(secs.some((s) => s.breadcrumb.includes("install deps"))).toBe(false)
+    // and the fenced block stays intact within the Commands section
+    const cmd = secs.find((s) => s.breadcrumb.includes("Commands"))
+    expect(cmd?.body).toContain("# install deps")
+    expect(cmd?.body).toContain("npm i")
+  })
+
+  test("falls back to a single section for heading-less content", () => {
+    const secs = splitSections("Note", "just a flat note with no headings at all")
+    expect(secs.length).toBe(1)
+    expect(secs[0]!.breadcrumb).toBe("Note")
+  })
 })

@@ -37,9 +37,132 @@ const RECALL_STOPWORDS = new Set(
   ).split(" "),
 )
 
+// Recall injection hygiene. Auto-recall fires every turn, so injecting weak or
+// duplicate matches steadily pollutes the window ("context rot": even a little
+// irrelevant content measurably degrades the model, and distractors are worse
+// than silence). On top of the strict AND-match, recall applies: a RELATIVE
+// floor (drop a weak tail trailing far behind the best hit — adapts to corpus
+// scale, safe on a tiny store), content dedup, and a char budget so the block
+// stays well under ~1k tokens. There is deliberately NO absolute bm25 floor:
+// FTS5 bm25 is corpus-scale-dependent and degenerate on a tiny store (it cuts
+// legitimate single matches), so the "inject nothing when irrelevant" guarantee
+// comes from the strict AND-match + meaningful-word gate instead. Tunable.
+const RECALL_REL_FLOOR = 0.5
+const RECALL_CHAR_BUDGET = 1200
+
+// Gentle multiplier (final score *= 1 + SECTION_WEIGHT * coverage) that rewards
+// entries whose best section densely covers the query over ones that only
+// mention the terms in passing. Each entry scales by its OWN coverage, so
+// rankings can shift within a bounded ≤40% band (a tightly-focused match may
+// leapfrog a higher-bm25 scattered one — intended). The boost is positive-only,
+// so it never drives a score below its unboosted value.
+const SECTION_WEIGHT = 0.4
+
 // Stable hash of an entry's content, for exact-duplicate detection (Phase 1).
 export function hashContent(content: string): string {
   return createHash("sha256").update(content.trim()).digest("hex")
+}
+
+// Build a safe FTS5 MATCH expression from arbitrary user text. FTS5 MATCH has
+// its own query language: a bareword containing punctuation like "AMD-V" is
+// parsed as an operator (the "-" reads as a column filter / NOT) and throws a
+// syntax error, which previously degraded the entire search to zero results.
+// So we tokenize ourselves, wrap each token as a verbatim double-quoted string
+// (FTS5's only string escape is "" for a literal quote), append a prefix "*"
+// for loose matching, and join with an explicit operator: "all" → AND (every
+// token must appear — strict auto-recall), "any" → OR (loose fuzzy-find — the
+// memory.search tool default). Returns null when nothing searchable remains.
+export function buildMatch(query: string, mode: "any" | "all"): string | null {
+  const tokens = query.match(/[\p{L}\p{N}_][\p{L}\p{N}_\-/.]*/gu) ?? []
+  if (tokens.length === 0) return null
+  // The regex can't capture a double-quote, but escape defensively anyway (FTS5's
+  // only string escape is "" for a literal quote) so the wrapping stays safe.
+  return tokens.map((t) => `"${t.replace(/"/g, '""')}" *`).join(mode === "all" ? " AND " : " OR ")
+}
+
+// Split a markdown memory entry into heading-delimited sections, each carrying a
+// breadcrumb (title › H2 › H3 …). Retrieving/injecting at section granularity
+// keeps a long multi-topic file from being treated as one undifferentiated blob:
+// the matched section is what gets surfaced, and a focused section can be scored
+// on its own terms instead of diluted by the rest of the file. Falls back to one
+// whole-content section for heading-less notes.
+export function splitSections(title: string | null | undefined, content: string): { breadcrumb: string; body: string }[] {
+  const base = (title ?? "").trim()
+  const sections: { breadcrumb: string; body: string }[] = []
+  const stack: { level: number; text: string }[] = []
+  let buf: string[] = []
+  let inFence = false
+  const flush = () => {
+    const body = buf.join("\n").trim()
+    if (body) sections.push({ breadcrumb: [base, ...stack.map((s) => s.text)].filter(Boolean).join(" › "), body })
+    buf = []
+  }
+  for (const line of content.split(/\r?\n/)) {
+    // Don't treat "#" lines inside ``` / ~~~ fenced code as headings (shell
+    // comments, markdown examples) — that would split mid-code and produce
+    // garbage breadcrumbs.
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      buf.push(line)
+      continue
+    }
+    const m = inFence ? null : /^(#{1,6})\s+(.+)$/.exec(line)
+    if (!m) {
+      buf.push(line)
+      continue
+    }
+    flush()
+    const level = m[1].length
+    while (stack.length && stack[stack.length - 1]!.level >= level) stack.pop()
+    stack.push({ level, text: m[2].trim() })
+  }
+  flush()
+  if (sections.length === 0) {
+    const body = content.trim()
+    return body ? [{ breadcrumb: base, body }] : []
+  }
+  return sections
+}
+
+// Lowercased content tokens of a query for section-level lexical matching
+// (mirrors buildMatch's tokenization, minus the FTS quoting).
+function queryTokens(query: string): string[] {
+  return (query.match(/[\p{L}\p{N}_][\p{L}\p{N}_\-/.]*/gu) ?? []).map((t) => t.toLowerCase())
+}
+
+// Pick the section of an entry that best covers the query. Returns a focused
+// snippet (breadcrumb + capped body) for injection, plus the coverage fraction
+// (distinct query tokens present / total) that drives a gentle ranking boost —
+// so an entry with a tight on-topic section outranks one that only name-drops
+// the terms in passing across an unrelated 150-line dump.
+export function bestSection(
+  title: string | null | undefined,
+  content: string,
+  tokens: string[],
+  cap = 400,
+): { snippet: string; coverage: number } {
+  const sections = splitSections(title, content)
+  const uniq = [...new Set(tokens)]
+  if (sections.length === 0) return { snippet: content.trim().slice(0, cap), coverage: 0 }
+  // Word-boundary (prefix) matchers, not raw substring: "\bai" matches "ai" /
+  // "aimbot" but NOT "maintain", mirroring FTS5 prefix semantics and avoiding
+  // mid-word false hits that would over-credit coverage or mis-pick the section.
+  const matchers = uniq.map((t) => new RegExp("\\b" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu"))
+  let best = sections[0]!
+  let bestHits = -1
+  for (const sec of sections) {
+    const hay = sec.breadcrumb + "\n" + sec.body
+    const hits = matchers.reduce((n, re) => (re.test(hay) ? n + 1 : n), 0)
+    if (hits > bestHits) {
+      bestHits = hits
+      best = sec
+    }
+  }
+  const body = best.body.length > cap ? best.body.slice(0, cap) + " …" : best.body
+  return {
+    snippet: best.breadcrumb ? `${best.breadcrumb}\n${body}` : body,
+    coverage: uniq.length ? bestHits / uniq.length : 0,
+  }
 }
 
 export const Scope = Schema.Literals(["global", "session"]).annotate({ identifier: "MemoryScope" })
@@ -503,20 +626,13 @@ export const layer = Layer.effect(
 
     const search: Interface["search"] = Effect.fn("Memory.search")(function* (input) {
       const limit = Math.max(1, Math.min(input.limit ?? 8, 50))
-      const tokens = input.query
-        .replace(/["']/g, " ")
-        .split(/\s+/)
-        .filter((t) => t.length > 0)
-        .map((t) => t.replace(/[^\w\-/.]/g, "").trim())
-        .filter(Boolean)
-      if (tokens.length === 0) return []
-      // matchMode: "any" (default) → tokens joined by " OR " — loose lexical
-      // recall, suits the explicit memory.search tool's fuzzy-find UX.
-      // "all" → space-joined (FTS5 default = AND) — every meaningful token
-      // must appear, used by auto-recall to avoid surfacing irrelevant
-      // memories on tangentially-related multi-word queries.
+      // matchMode: "any" (default) → tokens OR-joined — loose lexical recall,
+      // suits the explicit memory.search tool's fuzzy-find UX. "all" → AND —
+      // every meaningful token must appear, used by auto-recall to avoid
+      // surfacing irrelevant memories on tangentially-related multi-word queries.
       const matchMode = input.matchMode ?? "any"
-      const ftsQuery = tokens.map((t) => `${t}*`).join(matchMode === "all" ? " " : " OR ")
+      const ftsQuery = buildMatch(input.query, matchMode)
+      if (!ftsQuery) return []
       const sessionID = input.ctx.sessionID
       const rows = yield* tryDb(() =>
         Database.use((db) => {
@@ -542,20 +658,27 @@ export const layer = Layer.effect(
         Effect.orElseSucceed(() => [] as Array<typeof MemoryEntryTable.$inferSelect & { bm25: number }>),
       )
       const now = Date.now()
+      const qtokens = queryTokens(input.query)
       const ranked = rows
         .map((row) => {
           const entry = row2entry(row)
-          const s = score({
-            bm25: row.bm25,
-            reinforcedAt: entry.lastReinforced || entry.timeCreated,
-            reinforcement: entry.reinforcement,
-            importance: entry.importance,
-            now,
-          })
+          // Score the best-matching SECTION, not the whole file: pick its focused
+          // snippet for injection and let section coverage gently boost the rank.
+          const sec = bestSection(entry.title, entry.content, qtokens)
+          const s =
+            score({
+              bm25: row.bm25,
+              reinforcedAt: entry.lastReinforced || entry.timeCreated,
+              reinforcement: entry.reinforcement,
+              importance: entry.importance,
+              now,
+            }) *
+            (1 + SECTION_WEIGHT * sec.coverage)
           return {
             entry,
             score: entry.pinned ? s + 1 : s,
             bm25: normalizeBm25(row.bm25),
+            snippet: sec.snippet,
           } satisfies SearchResult
         })
         .sort((a, b) => b.score - a.score)
@@ -609,19 +732,40 @@ export const layer = Layer.effect(
         // worse than surfacing nothing.
         matchMode: "all",
       })
-      // FTS MATCH already filters to entries sharing a query term, and search()
-      // ranks them by the composite score; take the top-k. (No absolute BM25
-      // floor — BM25 is corpus-scale-dependent and degenerate on tiny stores.)
-      const relevant = hits.filter((h) => !skip.has(h.entry.path)).slice(0, limit)
-      if (relevant.length === 0) return undefined
+      // Hits are pre-ranked by composite score. Apply relevance floors, dedup,
+      // and a char budget so auto-recall never floods context with weak or
+      // duplicate memories (see RECALL_* notes above). Returns nothing when no
+      // hit clears the bar — silence beats a distractor on a per-turn inject.
+      const eligible = hits.filter((h) => !skip.has(h.entry.path))
+      if (eligible.length === 0) return undefined
+      const floor = eligible[0]!.score * RECALL_REL_FLOOR
+      const seen = new Set<string>()
+      const picked: { entry: Entry; snippet: string }[] = []
+      let budget = RECALL_CHAR_BUDGET
+      for (const h of eligible) {
+        if (picked.length >= limit) break
+        if (h.score < floor) continue
+        const content = h.entry.content.trim()
+        const key = hashContent(content)
+        if (seen.has(key)) continue
+        // Prefer the focused section snippet from search (breadcrumb + matched
+        // section) over a blind head-slice of the whole file.
+        const snippet = h.snippet ?? (content.length > 400 ? content.slice(0, 400) + " …" : content)
+        // Soft budget (snippet text only, excludes the path/tag wrapper). Hard
+        // break — not continue — so a high-score item is never skipped to squeeze
+        // in a lower-score one; the first item is always allowed even if oversized.
+        if (snippet.length > budget && picked.length > 0) break
+        seen.add(key)
+        budget -= snippet.length
+        picked.push({ entry: h.entry, snippet })
+      }
+      if (picked.length === 0) return undefined
       const lines = [
         `<recalled-memory note="Automatically surfaced from your memory; may be relevant to this turn. Not the user's words.">`,
       ]
-      for (const h of relevant) {
-        const content = h.entry.content.trim()
-        const snippet = content.length > 400 ? content.slice(0, 400) + " …" : content
-        lines.push(`[${h.entry.scope}] ${h.entry.path}${h.entry.title ? ` — ${h.entry.title}` : ""}`)
-        lines.push(`<snippet>${snippet}</snippet>`)
+      for (const p of picked) {
+        lines.push(`[${p.entry.scope}] ${p.entry.path}${p.entry.title ? ` — ${p.entry.title}` : ""}`)
+        lines.push(`<snippet>${p.snippet}</snippet>`)
       }
       lines.push("</recalled-memory>")
       return lines.join("\n")
