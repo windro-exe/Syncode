@@ -62,6 +62,7 @@ import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { DialogContext } from "../../component/dialog-context"
+import { DialogBtw } from "../../component/dialog-btw"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
@@ -600,18 +601,14 @@ export function Session() {
       },
     },
     {
-      title: "Ask an ephemeral side question",
+      title: "Ask a quick side question (concurrent, tool-less, ephemeral)",
       value: "session.btw",
       category: "Session",
       slash: {
         name: "btw",
       },
       run: () => {
-        prompt?.set({
-          input: "btw: ",
-          parts: [],
-        })
-        dialog.clear()
+        dialog.replace(() => <DialogBtw sessionID={route.sessionID} />)
       },
     },
     {

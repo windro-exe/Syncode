@@ -126,12 +126,26 @@ function isOrphanedInterruptedTool(part: MessageV2.ToolPart) {
   return part.state.status === "error" && part.state.metadata?.interrupted === true
 }
 
+// System prompt for `/btw` side questions — a one-shot, tool-less aside that
+// can see the conversation but never acts on it or persists.
+const BTW_SYSTEM =
+  "You are answering a quick SIDE QUESTION the user asked alongside an ongoing task. " +
+  "You can see the conversation so far for context. Answer directly and concisely in a SINGLE response. " +
+  "You have NO tools and cannot take any actions — do not offer to run, edit, search, or check anything; " +
+  "answer from what you already know. This is a standalone aside; do not try to resume or comment on the main task."
+
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<MessageV2.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<MessageV2.WithParts, Image.Error>
+  readonly btw: (input: {
+    sessionID: SessionID
+    question: string
+    providerID: ProviderID
+    modelID: ModelID
+  }) => Effect.Effect<{ text: string }>
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
 }
 
@@ -1899,12 +1913,74 @@ export const layer = Layer.effect(
       return result
     })
 
+    const btw = Effect.fn("SessionPrompt.btw")(function* (input: {
+      sessionID: SessionID
+      question: string
+      providerID: ProviderID
+      modelID: ModelID
+    }) {
+      // One-shot, TOOL-LESS side answer: sees the conversation for context but
+      // runs entirely outside the main turn and persists nothing. Same shape as
+      // the title-generation one-shot above.
+      const model = yield* provider.getModel(input.providerID, input.modelID).pipe(Effect.orDie)
+      const messages = yield* sessions.messages({ sessionID: input.sessionID }).pipe(Effect.orDie)
+      const userInfo = messages.findLast((m) => m.info.role === "user")?.info
+      if (!userInfo || userInfo.role !== "user") {
+        yield* elog.info("btw.no-user", { sessionID: input.sessionID })
+        return { text: "" }
+      }
+      yield* elog.info("btw.start", {
+        sessionID: input.sessionID,
+        modelID: input.modelID,
+        qlen: input.question.length,
+        msgs: messages.length,
+      })
+      // Build a plain-text transcript of the conversation. We deliberately do NOT
+      // forward the native tool-call/tool-result blocks: a tool-less request
+      // (tools: {}) that still carries toolUse/toolResult blocks is rejected by
+      // Bedrock ("toolConfig must be defined"). Prose context is all a side
+      // question needs, and a single user message avoids any role-alternation issues.
+      const transcript = messages
+        .map((m) => {
+          const text = m.parts
+            .flatMap((p) => (p.type === "text" ? [p.text] : []))
+            .join("\n")
+            .trim()
+          return text ? `${m.info.role === "user" ? "User" : "Assistant"}: ${text}` : ""
+        })
+        .filter(Boolean)
+        .join("\n\n")
+      const content = transcript
+        ? `Conversation so far (context only):\n\n${transcript}\n\n---\nQuick side question: ${input.question}`
+        : input.question
+      const text = yield* llm
+        .stream({
+          agent: yield* agents.get(userInfo.agent ?? (yield* agents.defaultAgent())),
+          user: userInfo,
+          system: [BTW_SYSTEM],
+          tools: {},
+          model,
+          sessionID: input.sessionID,
+          retries: 2,
+          messages: [{ role: "user" as const, content }],
+        })
+        .pipe(
+          Stream.filter(LLMEvent.is.textDelta),
+          Stream.map((e) => e.text),
+          Stream.mkString,
+          Effect.orDie,
+        )
+      yield* elog.info("btw.done", { chars: text.length })
+      return { text: text.trim() }
+    })
+
     return Service.of({
       cancel,
       prompt,
       loop,
       shell,
       command,
+      btw,
       resolvePromptParts,
     })
   }),

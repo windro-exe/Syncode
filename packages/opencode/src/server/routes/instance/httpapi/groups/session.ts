@@ -66,6 +66,12 @@ export const SummarizePayload = Schema.Struct({
 export const PromptPayload = Schema.Struct(Struct.omit(SessionPrompt.PromptInput.fields, ["sessionID"]))
 export const CommandPayload = Schema.Struct(Struct.omit(SessionPrompt.CommandInput.fields, ["sessionID"]))
 export const ShellPayload = Schema.Struct(Struct.omit(SessionPrompt.ShellInput.fields, ["sessionID"]))
+export const BtwPayload = Schema.Struct({
+  question: Schema.String,
+  providerID: ProviderID,
+  modelID: ModelID,
+})
+export const BtwResult = Schema.Struct({ text: Schema.String })
 export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput.fields, ["sessionID"]))
 export const PermissionResponsePayload = Schema.Struct({
   response: Permission.Reply,
@@ -91,6 +97,7 @@ export const SessionPaths = {
   prompt: `${root}/:sessionID/message`,
   promptAsync: `${root}/:sessionID/prompt_async`,
   command: `${root}/:sessionID/command`,
+  btw: `${root}/:sessionID/btw`,
   shell: `${root}/:sessionID/shell`,
   revert: `${root}/:sessionID/revert`,
   unrevert: `${root}/:sessionID/unrevert`,
@@ -347,6 +354,20 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.command",
             summary: "Send command",
             description: "Send a new command to a session for execution by the AI assistant.",
+          }),
+        ),
+        HttpApiEndpoint.post("btw", SessionPaths.btw, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          payload: BtwPayload,
+          success: described(BtwResult, "Side-question answer"),
+          error: [HttpApiError.BadRequest, ApiNotFoundError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.btw",
+            summary: "Ask a side question",
+            description:
+              "Answer a quick side question using the session context, tool-lessly and without persisting anything to the session.",
           }),
         ),
         HttpApiEndpoint.post("shell", SessionPaths.shell, {

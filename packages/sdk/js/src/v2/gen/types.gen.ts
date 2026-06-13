@@ -368,6 +368,11 @@ export type MemoryEntry = {
   pinned: boolean
   accessCount: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
   timeAccessed: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  importance: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  reinforcement: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  lastReinforced: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  contentHash?: string
+  kind: string
   timeCreated: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
   timeUpdated: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
 }
@@ -429,6 +434,7 @@ export type UserMessage = {
   time: {
     created: number
   }
+  pruned?: number
   format?: OutputFormat
   summary?: {
     title?: string
@@ -455,6 +461,7 @@ export type AssistantMessage = {
     created: number
     completed?: number
   }
+  pruned?: number
   error?:
     | ProviderAuthError
     | UnknownError
@@ -2004,6 +2011,11 @@ export type MemoryEntry1 = {
   pinned: boolean
   accessCount: number | "NaN" | "Infinity" | "-Infinity"
   timeAccessed: number | "NaN" | "Infinity" | "-Infinity"
+  importance: number | "NaN" | "Infinity" | "-Infinity"
+  reinforcement: number | "NaN" | "Infinity" | "-Infinity"
+  lastReinforced: number | "NaN" | "Infinity" | "-Infinity"
+  contentHash?: string
+  kind: string
   timeCreated: number | "NaN" | "Infinity" | "-Infinity"
   timeUpdated: number | "NaN" | "Infinity" | "-Infinity"
 }
@@ -6884,6 +6896,46 @@ export type SessionCommandResponses = {
 }
 
 export type SessionCommandResponse = SessionCommandResponses[keyof SessionCommandResponses]
+
+export type SessionBtwData = {
+  body?: {
+    question: string
+    providerID: string
+    modelID: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/btw"
+}
+
+export type SessionBtwErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type SessionBtwError = SessionBtwErrors[keyof SessionBtwErrors]
+
+export type SessionBtwResponses = {
+  /**
+   * Side-question answer
+   */
+  200: {
+    text: string
+  }
+}
+
+export type SessionBtwResponse = SessionBtwResponses[keyof SessionBtwResponses]
 
 export type SessionShellData = {
   body?: {
