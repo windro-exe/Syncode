@@ -137,9 +137,15 @@ export const BUILTIN_PROVIDERS: Record<string, Provider> = {
     npm: "kiro",
     env: ["KIRO_API_KEY"],
     models: {
-      // Context/output limits per official Kiro docs (kiro.dev/docs/models).
-      "claude-opus-4.8": kiroModel("claude-opus-4.8", "Claude Opus 4.8", "2026-01-01", 1_000_000, 128_000),
-      "claude-opus-4.7": kiroModel("claude-opus-4.7", "Claude Opus 4.7", "2025-11-01", 1_000_000, 128_000),
+      // Context limits EMPIRICALLY MEASURED against the Q backend 2026-07-14, NOT the
+      // advertised catalog numbers. AWS capacity-throttles INPUT on the newest models
+      // (opus-4.8/4.7 + the sonnet-5 preview) to ~640K tokens despite their "1M" label;
+      // the mature opus-4.6/sonnet-4.6 genuinely deliver ~1M. Past ~2.65M chars the throttled
+      // ones return ValidationException/CONTENT_LENGTH_EXCEEDS_THRESHOLD, so we declare the
+      // real ceiling here to let context pruning fire before Q hard-rejects.
+      "claude-sonnet-5": kiroModel("claude-sonnet-5", "Claude Sonnet 5", "2026-07-01", 640_000, 64_000),
+      "claude-opus-4.8": kiroModel("claude-opus-4.8", "Claude Opus 4.8", "2026-01-01", 640_000, 128_000),
+      "claude-opus-4.7": kiroModel("claude-opus-4.7", "Claude Opus 4.7", "2025-11-01", 640_000, 128_000),
       "claude-opus-4.6": kiroModel("claude-opus-4.6", "Claude Opus 4.6", "2025-09-01", 1_000_000, 128_000),
       "claude-opus-4.5": kiroModel("claude-opus-4.5", "Claude Opus 4.5", "2025-07-01", 200_000, 64_000),
       "claude-sonnet-4.6": kiroModel("claude-sonnet-4.6", "Claude Sonnet 4.6", "2025-11-01", 1_000_000, 64_000),
