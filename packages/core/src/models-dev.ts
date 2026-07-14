@@ -116,17 +116,24 @@ export type Provider = Schema.Schema.Type<typeof Provider>
 // over any same-id upstream entry so the vendored SDK binding stays authoritative.
 // ---------------------------------------------------------------------------
 
-function kiroModel(id: string, name: string, release_date: string, context: number, output: number): Model {
+function kiroModel(
+  id: string,
+  name: string,
+  release_date: string,
+  context: number,
+  output: number,
+  input: ("text" | "image" | "pdf")[] = ["text", "image", "pdf"],
+): Model {
   return {
     id,
     name,
     release_date,
-    attachment: true,
+    attachment: input.length > 1,
     reasoning: true,
     temperature: true,
     tool_call: true,
     limit: { context, output },
-    modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    modalities: { input, output: ["text"] },
   }
 }
 
@@ -150,6 +157,12 @@ export const BUILTIN_PROVIDERS: Record<string, Provider> = {
       "claude-opus-4.5": kiroModel("claude-opus-4.5", "Claude Opus 4.5", "2025-07-01", 200_000, 64_000),
       "claude-sonnet-4.6": kiroModel("claude-sonnet-4.6", "Claude Sonnet 4.6", "2025-11-01", 1_000_000, 64_000),
       "claude-sonnet-4.5": kiroModel("claude-sonnet-4.5", "Claude Sonnet 4.5", "2025-07-01", 200_000, 64_000),
+      // GPT-5.6 variants (experimental preview). Verified 2026-07-14: real ~272K window
+      // (advertised 272k is accurate here, NOT throttled) and TEXT-ONLY — the Q `images`
+      // field returns REQUEST_BODY_INVALID for these (Claude accepts it), so no image/pdf.
+      "gpt-5.6-sol": kiroModel("gpt-5.6-sol", "GPT-5.6 Sol", "2026-07-01", 272_000, 64_000, ["text"]),
+      "gpt-5.6-terra": kiroModel("gpt-5.6-terra", "GPT-5.6 Terra", "2026-07-01", 272_000, 64_000, ["text"]),
+      "gpt-5.6-luna": kiroModel("gpt-5.6-luna", "GPT-5.6 Luna", "2026-07-01", 272_000, 64_000, ["text"]),
     },
   },
 }
