@@ -883,8 +883,13 @@ export class KiroLanguageModel implements LanguageModelV3 {
 
   private buildBody(state: unknown, effort: string | undefined): string {
     const body: Record<string, unknown> = { conversationState: state }
-    // Reasoning effort — same wire shape Kiro CLI uses (output_config.effort).
-    if (effort) body["additionalModelRequestFields"] = { output_config: { effort } }
+    // Reasoning-effort wire shape differs by model family (verified against Q 2026-07-14):
+    // Claude takes output_config.effort; GPT rejects that ("property not defined in schema")
+    // and instead takes reasoning.effort. Sending the wrong shape 400s the whole request.
+    if (effort)
+      body["additionalModelRequestFields"] = this.modelId.includes("gpt")
+        ? { reasoning: { effort } }
+        : { output_config: { effort } }
     return JSON.stringify(body)
   }
 

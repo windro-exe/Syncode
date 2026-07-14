@@ -817,9 +817,14 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
     }
 
     case "kiro":
-      // Built-in Kiro provider: effort lands under providerOptions.kiro.effort and is
-      // injected into the AWS Q request as output_config.effort. Reasoning streams
-      // automatically (no thinking flag needed), so the variant only carries effort.
+      // Built-in Kiro provider: effort lands under providerOptions.kiro.effort. index.ts
+      // picks the wire shape per model family (Claude → output_config.effort, GPT →
+      // reasoning.effort). Reasoning streams automatically, so the variant only carries effort.
+      // GPT-5.x and Claude Sonnet 5 support the full tier set (verified against Q 2026-07-14)
+      // but their ids aren't matched by anthropicAdaptiveEfforts, so list them explicitly.
+      if (id.includes("gpt") || id.includes("sonnet-5")) {
+        return Object.fromEntries(["low", "medium", "high", "xhigh", "max"].map((effort) => [effort, { effort }]))
+      }
       if (adaptiveEfforts) {
         return Object.fromEntries(adaptiveEfforts.map((effort) => [effort, { effort }]))
       }
