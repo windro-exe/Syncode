@@ -74,16 +74,27 @@ $dest = Join-Path $HOME ".local\bin"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 $installed = Join-Path $dest "opencode.exe"
 
-# Windows locks a running exe, so move it aside rather than overwriting. Don't silence
-# this: if the aside-move fails we must not clobber a locked binary.
-if (Test-Path -LiteralPath $installed) { Move-Item -LiteralPath $installed "$installed.old" -Force }
+# Windows locks a running exe, so move it aside rather than overwriting. A rename of a
+# running image is allowed, but overwriting one is not - so after the first install the
+# previous .old IS the running session's image and cannot be replaced. Clear it, and if
+# it is still held, park this backup under a unique name instead of failing the install.
+$backup = "$installed.old"
+if (Test-Path -LiteralPath $installed) {
+  if (Test-Path -LiteralPath $backup) {
+    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $backup) { $backup = "$installed." + (Get-Date -Format "yyyyMMddHHmmss") + ".old" }
+  }
+  # Don't silence this: if the aside-move fails we must not clobber a locked binary.
+  Move-Item -LiteralPath $installed $backup -Force
+}
 try { Copy-Item -LiteralPath $src -Destination $installed -Force }
 catch {
-  if (Test-Path -LiteralPath "$installed.old") { Move-Item -LiteralPath "$installed.old" $installed -Force }
+  if (Test-Path -LiteralPath $backup) { Move-Item -LiteralPath $backup $installed -Force }
   throw
 }
 
 Write-Host "Installed $target -> $installed ($stamp)"
+Write-Host "Previous binary kept at $backup"
 Write-Host "Config, sessions, auth and memory are untouched. Restart any running session to pick this up."
 if (([Environment]::GetEnvironmentVariable("PATH", "User") -split ';') -notcontains $dest) {
   Write-Host "note: $dest is not on your user PATH - add it so 'opencode' resolves here."
