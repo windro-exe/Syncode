@@ -151,6 +151,7 @@ export const BUILTIN_PROVIDERS: Record<string, Provider> = {
       // ones return ValidationException/CONTENT_LENGTH_EXCEEDS_THRESHOLD, so we declare the
       // real ceiling here to let context pruning fire before Q hard-rejects.
       "claude-sonnet-5": kiroModel("claude-sonnet-5", "Claude Sonnet 5", "2026-07-01", 640_000, 64_000),
+      "claude-opus-5": kiroModel("claude-opus-5", "Claude Opus 5", "2026-08-01", 640_000, 128_000),
       "claude-opus-4.8": kiroModel("claude-opus-4.8", "Claude Opus 4.8", "2026-01-01", 640_000, 128_000),
       "claude-opus-4.7": kiroModel("claude-opus-4.7", "Claude Opus 4.7", "2025-11-01", 640_000, 128_000),
       "claude-opus-4.6": kiroModel("claude-opus-4.6", "Claude Opus 4.6", "2025-09-01", 1_000_000, 128_000),

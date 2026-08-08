@@ -820,9 +820,10 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
       // Built-in Kiro provider: effort lands under providerOptions.kiro.effort. index.ts
       // picks the wire shape per model family (Claude → output_config.effort, GPT →
       // reasoning.effort). Reasoning streams automatically, so the variant only carries effort.
-      // GPT-5.x and Claude Sonnet 5 support the full tier set (verified against Q 2026-07-14)
-      // but their ids aren't matched by anthropicAdaptiveEfforts, so list them explicitly.
-      if (id.includes("gpt") || id.includes("sonnet-5")) {
+      // GPT-5.x and the Opus 5 / Sonnet 5 previews support the full tier set (verified
+      // against Q 2026-07-14) but aren't matched by anthropicAdaptiveEfforts, so list them
+      // explicitly.
+      if (id.includes("gpt") || id.includes("opus-5") || id.includes("sonnet-5")) {
         return Object.fromEntries(["low", "medium", "high", "xhigh", "max"].map((effort) => [effort, { effort }]))
       }
       if (adaptiveEfforts) {
