@@ -142,9 +142,49 @@ The section below is specific to wnxd's local clone. It does not exist upstream 
 
 ### Layout
 
-- Origin: `https://github.com/anomalyco/opencode.git`
-- Working branch: **`wnxd`** — every local feature commits here.
-- Build: `bun run build` from `packages/opencode`. Output is a real production single-exe (~143 MB), bundled and minified — there is no separate "prod vs dev" binary.
+- Origin: `https://github.com/windro-xdd/Syncode.git` (upstream is `anomalyco/opencode`)
+- Working branch: **`wnxd`** — every local feature commits here. `dist` holds prebuilt binaries + `version.json`; never develop on it.
+- Local source tree: `C:\wnx-projects\Syncode-wnxd` (Windows). Do not work out of `%TEMP%` — cleanup tools eat it.
+- Build: `bun run build` from `packages/opencode`. Output is a real production single-exe (~143 MB), bundled and minified — there is no separate "prod vs dev" binary. Add `--single` to build only the current platform instead of all 12 targets.
+
+### Build and install (Windows) — the normal loop
+
+Agents do this unattended; it needs no env setup and no arguments:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+That builds from local source and installs to `~/.local/bin/opencode.exe`, keeping the
+old binary as `opencode.exe.old`. Pass `-AllTargets` only for a release cross-compile.
+Config, sessions, auth and memory are never touched. Restart the TUI to pick up a new build.
+
+- **Version stamp lives in `SYNCODE_VERSION`** at the repo root. `install.ps1` reads it;
+  `$env:OPENCODE_VERSION` or `-Version` override it. Bump that file, not the script.
+  Without a stamp, `Script.version` falls back to `git branch --show-current` and produces
+  a junk `0.0.0--<timestamp>` build, so the stamp is mandatory — and must stay semver-ABOVE
+  the latest upstream npm release so the in-app updater never overwrites this build.
+- **Never invoke bare `bun` from PowerShell.** npm installs a `bun.ps1` shim that
+  PowerShell prefers and a restricted execution policy blocks. Use `bun.cmd`/`bun.exe`
+  (`install.ps1` resolves this itself).
+- **`tree-sitter-powershell`'s postinstall always fails** — node-gyp wants Visual Studio.
+  Harmless: the package ships a `.wasm` and parsing goes through `web-tree-sitter`. The
+  build and its smoke test are the real gate, not `bun install`'s exit code.
+- **Moving the tree breaks `node_modules`.** Bun's isolated linker writes ~8,900 symlinks
+  under `node_modules\.bun\` with absolute targets. After any move, `bun install --force`.
+  Note `--force` also re-resolves `github:` deps like `ghostty-web`; check `bun.lock` isn't
+  drifting before committing.
+
+### Adding models
+
+Built-in providers and their model lists live in `packages/core/src/models-dev.ts`
+(`BUILTIN_PROVIDERS`). Add a `kiroModel(id, name, release_date, context, output, input[])`
+entry. Context limits there are empirically measured against the Q backend, not the
+advertised catalog numbers — don't "correct" them upward from marketing pages.
+
+If a new model needs the full reasoning-effort tier set (`low`…`max`), also add its id to
+the explicit check in `packages/opencode/src/provider/transform.ts` (`variants()`);
+`anthropicAdaptiveEfforts` does not match preview ids. Then rebuild and install.
 
 ### Local features layered on top of upstream
 
@@ -173,22 +213,20 @@ Concretely:
 - Never run `bun upgrade`, `opencode upgrade`, or any equivalent install script that pulls from GitHub releases or npm.
 - The version stamp (`OPENCODE_VERSION` baked at build time) is set high on purpose so the in-app upgrader's release-type check doesn't auto-install anything. If you see `1.16.0-wnxd` or higher, that's intentional — don't "fix" it down.
 
+`scripts/update-remote.ps1` is the same hazard in local clothing: it downloads the
+prebuilt binary from the `dist` branch and swaps it in. That is correct for a machine
+that only consumes published builds, but running it after local source edits silently
+reverts the installed binary to whatever `dist` holds. On a dev machine, use
+`scripts/install.ps1` instead.
+
 When the user wants to take an upstream update:
 
 1. They will explicitly tell you ("update from upstream", "pull the latest opencode", etc.).
-2. From `wnxd` branch: `git fetch origin && git merge origin/dev` — resolve conflicts in the local-feature files (memory system, /remember, prompt loop neutering, instruction.ts).
-3. Run `bun typecheck` from `packages/opencode` and fix anything broken before building.
-4. Rebuild with the version stamp:
-   ```bash
-   OPENCODE_VERSION=<new-stamp> bun run build
-   ```
-   Pick a stamp that semver-compares ABOVE the latest upstream npm release.
-5. Install (Windows file lock requires rename-swap if a TUI is running):
-   ```bash
-   mv ~/.local/bin/opencode.exe ~/.local/bin/opencode.exe.old
-   cp packages/opencode/dist/opencode-windows-x64/bin/opencode.exe ~/.local/bin/opencode.exe
-   ```
-6. Smoke test: `~/.local/bin/opencode.exe --version` should print the new stamp.
+2. From `wnxd` branch: `git fetch upstream && git merge upstream/dev` — resolve conflicts in the local-feature files (memory system, /remember, prompt loop neutering, instruction.ts).
+3. Run `bun typecheck` from `packages/opencode` and `packages/core`; fix anything broken before building.
+4. Bump `SYNCODE_VERSION` to a stamp that semver-compares ABOVE the latest upstream npm release.
+5. Build and install in one step: `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`
+6. Confirm: `~/.local/bin/opencode.exe --version` prints the new stamp.
 
 ### Memory profiling
 
