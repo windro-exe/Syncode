@@ -6,8 +6,9 @@ import { Global } from "@opencode-ai/core/global"
 import { LSP } from "@/lsp/lsp"
 import { Vcs } from "@/project/vcs"
 import { Skill } from "@/skill"
+import { loadProjectRules, removeRule } from "@/session/rules"
 import { Effect } from "effect"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 import { ApiVcsApplyError } from "../groups/instance"
 import { markInstanceForDisposal } from "../lifecycle"
@@ -93,6 +94,32 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       return yield* format.status()
     })
 
+    const getRules = Effect.fn("InstanceHttpApi.rules")(function* () {
+      const ctx = yield* InstanceState.context
+      return loadProjectRules(ctx.directory).flatMap((file) =>
+        file.rules.map((rule) => ({
+          rule,
+          file: file.name,
+          path: file.path,
+          enabled: file.enabled,
+        })),
+      )
+    })
+
+    const rulesDelete = Effect.fn("InstanceHttpApi.rulesDelete")(function* (ctx: {
+      payload: { rule: string; filePath: string }
+    }) {
+      const inst = yield* InstanceState.context
+      const result = removeRule({
+        scope: "project",
+        rule: ctx.payload.rule,
+        cwd: inst.directory,
+        filePath: ctx.payload.filePath,
+      })
+      if (!result.success) return yield* Effect.fail(new HttpApiError.BadRequest({}))
+      return true
+    })
+
     return handlers
       .handle("dispose", dispose)
       .handle("path", getPath)
@@ -106,5 +133,7 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       .handle("skill", getSkill)
       .handle("lsp", getLsp)
       .handle("formatter", getFormatter)
+      .handle("rules", getRules)
+      .handle("rulesDelete", rulesDelete)
   }),
 )

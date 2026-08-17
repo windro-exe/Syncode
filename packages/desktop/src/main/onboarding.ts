@@ -8,6 +8,10 @@ import { write as writeLog } from "./logging"
 import { hasExistingAppState } from "./install-state"
 
 const DEFAULT_PROJECT_DIR = "Default Project"
+// The CLI rules tool reads this key (default-project.v1 in the store) to tell
+// default-project sessions apart from real project sessions: rules added there
+// are global rules, not project rules.
+const DEFAULT_PROJECT_MARKER_KEY = "default-project.v1"
 
 export function initializeOldLayoutEligibility(userDataPath: string) {
   const entries = existsSync(userDataPath) ? readdirSync(userDataPath, { withFileTypes: true }) : []
@@ -37,7 +41,10 @@ export async function finishFirstLaunchOnboarding(createDefaultProject: boolean)
   }
 
   const defaultProject = createDefaultProject ? join(app.getPath("documents"), DEFAULT_PROJECT_DIR) : null
-  if (defaultProject) await mkdir(defaultProject, { recursive: true })
+  if (defaultProject) {
+    await mkdir(defaultProject, { recursive: true })
+    getStore().set(DEFAULT_PROJECT_MARKER_KEY, defaultProject)
+  }
 
   getStore().set(FIRST_LAUNCH_ONBOARDING_COMPLETE_KEY, true)
   writeLog("onboarding", "first launch onboarding completed", { createDefaultProject, defaultProject })

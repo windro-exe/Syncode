@@ -1,4 +1,4 @@
-import { NodeHttpServer } from "@effect/platform-node"
+import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
@@ -16,6 +16,8 @@ import { globalHandlers } from "../../src/server/routes/instance/httpapi/handler
 import { authorizationLayer } from "../../src/server/routes/instance/httpapi/middleware/authorization"
 import { schemaErrorLayer } from "../../src/server/routes/instance/httpapi/middleware/schema-error"
 import { testEffect } from "../lib/effect"
+import { tmpdirScoped } from "../fixture/fixture"
+import path from "path"
 
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(RootHttpApi).pipe(
@@ -28,6 +30,7 @@ const apiLayer = HttpRouter.serve(
   { disableListenLog: true, disableLogger: true },
 ).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(NodeServices.layer),
   Layer.provide(Layer.mock(Auth.Service)({})),
   Layer.provide(Layer.mock(Config.Service)({})),
   Layer.provide(Layer.mock(MoveSession.Service)({})),
@@ -61,6 +64,35 @@ describe("global HttpApi", () => {
 
       expect(response.status).toBe(400)
       expect(yield* response.json).toEqual({ success: false, error: "Invalid request body" })
+    }),
+  )
+
+  it.live("lists global operational rules", () =>
+    Effect.gen(function* () {
+      const response = yield* HttpClient.get(GlobalPaths.rules)
+
+      expect(response.status).toBe(200)
+      expect(Array.isArray(yield* response.json)).toBe(true)
+    }),
+  )
+
+  it.live("deletes a rule from its rule file", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const filePath = path.join(dir, "global.md")
+      yield* Effect.promise(() => Bun.write(filePath, "- keep this rule forever\n- remove this one now\n"))
+      yield* Effect.promise(() => Bun.write(path.join(dir, "keep.md"), "- keep me\n"))
+
+      const response = yield* HttpClientRequest.make("DELETE")(GlobalPaths.rules).pipe(
+        HttpClientRequest.setBody(HttpBody.jsonUnsafe({ rule: "remove this one now", filePath })),
+        HttpClient.execute,
+      )
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toBe(true)
+      const text = yield* Effect.promise(() => Bun.file(filePath).text())
+      expect(text).toContain("keep this rule forever")
+      expect(text).not.toContain("remove this one now")
     }),
   )
 })

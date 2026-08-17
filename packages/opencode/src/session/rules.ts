@@ -70,7 +70,46 @@ if (process.env.APPDATA) {
   GLOBAL_RULE_DIRS.push(path.join(process.env.APPDATA, "opencode", "rules"))
 }
 
+const DEFAULT_PROJECT_MARKER_KEY = "default-project.v1"
+
+function desktopStoreDirs(): string[] {
+  return [
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop.dev") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode") : null,
+    path.join(os.homedir(), ".config", "opencode"),
+  ].filter(Boolean) as string[]
+}
+
+/**
+ * The desktop app's "Default Project" is where non-project chats live. It is not
+ * a real project: rules added there are global rules. The directory is persisted
+ * by the desktop app under `default-project.v1` in its default.dat store; the
+ * well-known Documents\Default Project location is the fallback for installs
+ * that predate the marker.
+ */
+export function defaultProjectDirectory(): string | undefined {
+  for (const datDir of desktopStoreDirs()) {
+    const datPath = path.join(datDir, "default.dat")
+    if (!fs.existsSync(datPath)) continue
+    try {
+      const parsed = JSON.parse(fs.readFileSync(datPath, "utf8"))
+      const marker = parsed?.[DEFAULT_PROJECT_MARKER_KEY]
+      if (typeof marker === "string" && marker) return marker
+    } catch {
+      // Ignore unreadable store
+    }
+  }
+  const fallback = path.join(os.homedir(), "Documents", "Default Project")
+  return fs.existsSync(fallback) ? fallback : undefined
+}
+
 export function loadProjectRules(cwd: string): RuleFile[] {
+  if (cwd && cwd === defaultProjectDirectory()) return []
+  return collectDirectoryRules(cwd)
+}
+
+function collectDirectoryRules(cwd: string): RuleFile[] {
   const results: RuleFile[] = []
   if (!cwd || !fs.existsSync(cwd)) return results
 
@@ -121,15 +160,8 @@ export function loadProjectRules(cwd: string): RuleFile[] {
     }
   }
 
-  // Also check desktop default.dat store files for UI project rules (project-rules:<cwd>)
-  const datDirs = [
-    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop") : null,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop.dev") : null,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode") : null,
-    path.join(os.homedir(), ".config", "opencode"),
-  ].filter(Boolean) as string[]
-
-  for (const datDir of datDirs) {
+// Also check desktop default.dat store files for UI project rules (project-rules:<cwd>)
+  for (const datDir of desktopStoreDirs()) {
     const datPath = path.join(datDir, "default.dat")
     if (fs.existsSync(datPath)) {
       try {
@@ -173,14 +205,7 @@ export function loadProjectIdea(cwd: string): string | undefined {
   }
 
   // Check desktop default.dat store for UI project idea (project-idea:<cwd>)
-  const datDirs = [
-    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop") : null,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop.dev") : null,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode") : null,
-    path.join(os.homedir(), ".config", "opencode"),
-  ].filter(Boolean) as string[]
-
-  for (const datDir of datDirs) {
+  for (const datDir of desktopStoreDirs()) {
     const datPath = path.join(datDir, "default.dat")
     if (fs.existsSync(datPath)) {
       try {
@@ -233,15 +258,8 @@ export function loadGlobalRules(): RuleFile[] {
     }
   }
 
-  // Also check desktop default.dat store files if present
-  const datDirs = [
-    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop") : null,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop.dev") : null,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode") : null,
-    path.join(os.homedir(), ".config", "opencode"),
-  ].filter(Boolean) as string[]
-
-  for (const datDir of datDirs) {
+// Also check desktop default.dat store files if present
+  for (const datDir of desktopStoreDirs()) {
     const datPath = path.join(datDir, "default.dat")
     if (fs.existsSync(datPath)) {
       try {
@@ -266,6 +284,21 @@ export function loadGlobalRules(): RuleFile[] {
       } catch {
         // Ignore
       }
+    }
+  }
+
+  // The default project is not a project — its rules (files and UI store) are
+  // global rules. Collect them through the same directory walker used for
+  // projects, then re-label them as default-project sources.
+  const defaultDir = defaultProjectDirectory()
+  if (defaultDir) {
+    for (const file of collectDirectoryRules(defaultDir)) {
+      results.push({
+        name: `default:${file.name}`,
+        path: file.path,
+        rules: file.rules,
+        enabled: file.enabled,
+      })
     }
   }
 
@@ -416,20 +449,23 @@ export function removeRule(opts: {
   rule: string
   cwd?: string
   file?: string
+  filePath?: string
 }): { success: boolean; filePath: string; remainingCount: number } {
   const cleanRule = opts.rule.trim()
-  let targetDir = ""
-  let targetFile = ""
+  let targetFile = opts.filePath
 
-  if (opts.scope === "project") {
-    const cwd = opts.cwd || process.cwd()
-    targetDir = path.join(cwd, ".syncode", "rules")
-    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "project.md"
-    targetFile = path.join(targetDir, fileName)
-  } else {
-    targetDir = path.join(os.homedir(), ".syncode", "rules")
-    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "global.md"
-    targetFile = path.join(targetDir, fileName)
+  if (!targetFile) {
+    let targetDir = ""
+    if (opts.scope === "project") {
+      const cwd = opts.cwd || process.cwd()
+      targetDir = path.join(cwd, ".syncode", "rules")
+      const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "project.md"
+      targetFile = path.join(targetDir, fileName)
+    } else {
+      targetDir = path.join(os.homedir(), ".syncode", "rules")
+      const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "global.md"
+      targetFile = path.join(targetDir, fileName)
+    }
   }
 
   if (!fs.existsSync(targetFile)) {

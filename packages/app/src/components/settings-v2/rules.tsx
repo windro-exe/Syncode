@@ -1,13 +1,11 @@
-import { Component, createSignal, createMemo, For, Show } from "solid-js"
+import { Component, createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
-import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
 import { Switch } from "@opencode-ai/ui/v2/switch-v2"
 import { Icon } from "@opencode-ai/ui/icon"
-import { useLanguage } from "@/context/language"
-import { useSettings, type GlobalRuleSetting, defaultGlobalRules } from "@/context/settings"
+import { useSettings, type GlobalRuleSetting } from "@/context/settings"
+import { useServerSDK } from "@/context/server-sdk"
 import { SettingsListV2 } from "./parts/list"
-import { SettingsRowV2 } from "./parts/row"
 import "./settings-v2.css"
 
 const RULE_PRESETS: Array<{ label: string; rule: string; category: string }> = [
@@ -20,14 +18,41 @@ const RULE_PRESETS: Array<{ label: string; rule: string; category: string }> = [
 ]
 
 export const SettingsRulesV2: Component = () => {
-  const language = useLanguage()
   const settings = useSettings()
+  const serverSDK = useServerSDK()
 
   const [draft, setDraft] = createSignal("")
   const [draftCategory, setDraftCategory] = createSignal("General")
 
-  const rules = createMemo(() => settings.globalRules.list())
+const [serverRules, { refetch }] = createResource(
+    () => serverSDK().client,
+    async (client) => (await client.global.rules()).data ?? [],
+  )
+  const rules = createMemo(() => {
+    const local = settings.globalRules.list().map((rule) => ({ ...rule, source: "settings" as const }))
+    const localRules = new Set(local.map((rule) => rule.rule))
+    const external = (serverRules() ?? [])
+      .filter((rule) => !localRules.has(rule.rule))
+      .map((rule) => ({
+        id: `file:${rule.file}:${rule.rule}`,
+        rule: rule.rule,
+        category: rule.file,
+        enabled: rule.enabled,
+        filePath: rule.path,
+        source: "file" as const,
+      }))
+    return [...local, ...external]
+  })
   const activeCount = createMemo(() => rules().filter((r) => r.enabled).length)
+
+  const removeFileRule = async (rule: string, filePath: string) => {
+    try {
+      await serverSDK().client.global.rules2.delete({ rule, filePath })
+    } catch {
+      // fall through to refetch so the list reflects what the server actually has
+    }
+    void refetch()
+  }
 
   const addRule = (text?: string, category?: string) => {
     const ruleText = (text ?? draft()).trim()
@@ -141,16 +166,31 @@ export const SettingsRulesV2: Component = () => {
                       type="text"
                       class="w-full bg-transparent text-13-regular text-text-base focus:outline-none"
                       value={item.rule}
-                      onBlur={(e) => settings.globalRules.update(item.id, { rule: e.currentTarget.value.trim() || item.rule })}
+                       readOnly={item.source === "file"}
+                       onBlur={(e) => {
+                         if (item.source === "settings") {
+                           settings.globalRules.update(item.id, { rule: e.currentTarget.value.trim() || item.rule })
+                         }
+                       }}
                     />
                   </div>
 
                   <div class="flex items-center gap-3 shrink-0">
                     <Switch
                       checked={item.enabled}
-                      onChange={() => settings.globalRules.toggle(item.id)}
+                      disabled={item.source === "file"}
+                      onChange={() => {
+                        if (item.source === "settings") settings.globalRules.toggle(item.id)
+                      }}
                     />
-                    <ButtonV2 variant="outline" size="small" onClick={() => settings.globalRules.remove(item.id)}>
+<ButtonV2
+                      variant="outline"
+                      size="small"
+                      onClick={() => {
+                        if (item.source === "settings") settings.globalRules.remove(item.id)
+                        else if (item.source === "file" && item.filePath) void removeFileRule(item.rule, item.filePath)
+                      }}
+                    >
                       <Icon name="trash" />
                     </ButtonV2>
                   </div>

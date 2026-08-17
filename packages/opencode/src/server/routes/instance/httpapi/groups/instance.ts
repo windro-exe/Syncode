@@ -5,7 +5,7 @@ import { LSP } from "@/lsp/lsp"
 import { Vcs } from "@/project/vcs"
 import { Skill } from "@/skill"
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { Authorization } from "../middleware/authorization"
 import { InstanceContextMiddleware } from "../middleware/instance-context"
 import {
@@ -14,6 +14,7 @@ import {
   WorkspaceRoutingQueryFields,
 } from "../middleware/workspace-routing"
 import { described } from "./metadata"
+import { GlobalRules, GlobalRuleDeleteInput } from "./global"
 
 const PathInfo = Schema.Struct({
   home: Schema.String,
@@ -53,6 +54,7 @@ export const InstancePaths = {
   skill: "/skill",
   lsp: "/lsp",
   formatter: "/formatter",
+  rules: "/rules",
 } as const
 
 export const InstanceApi = HttpApi.make("instance")
@@ -184,6 +186,28 @@ export const InstanceApi = HttpApi.make("instance")
             identifier: "formatter.status",
             summary: "Get formatter status",
             description: "Get formatter status",
+          }),
+        ),
+        HttpApiEndpoint.get("rules", InstancePaths.rules, {
+          query: WorkspaceRoutingQuery,
+          success: described(GlobalRules, "List project operational rules"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "rules.list",
+            summary: "List project rules",
+            description: "Retrieve project operational rules for the current workspace.",
+          }),
+        ),
+        HttpApiEndpoint.delete("rulesDelete", InstancePaths.rules, {
+          query: WorkspaceRoutingQuery,
+          payload: GlobalRuleDeleteInput,
+          success: described(Schema.Boolean, "Rule removed"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "rules.delete",
+            summary: "Delete a project rule",
+            description: "Remove a project operational rule from the rule file it lives in.",
           }),
         ),
       )

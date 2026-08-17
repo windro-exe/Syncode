@@ -2,11 +2,10 @@ import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import DESCRIPTION from "./rules.txt"
 import { InstanceState } from "@/effect/instance-state"
-import { loadProjectRules, loadGlobalRules, addRule, removeRule } from "@/session/rules"
+import { loadProjectRules, loadGlobalRules, addRule, removeRule, defaultProjectDirectory } from "@/session/rules"
 
 import * as os from "node:os"
 import * as path from "node:path"
-import * as fs from "node:fs"
 
 export const Parameters = Schema.Struct({
   action: Schema.optional(
@@ -16,7 +15,7 @@ export const Parameters = Schema.Struct({
   ),
   scope: Schema.optional(
     Schema.Literals(["auto", "project", "global"]).annotate({
-      description: '"auto" (default: automatically uses project rules if inside a project session, or global rules if in a default session), "project" (strictly workspace rules), "global" (strictly global rules).',
+      description: '"auto" (default; omit scope for normal requests), "project" (only when the user explicitly asks for project/workspace rules), "global" (only when the user explicitly asks for global/all-workspace rules).',
     }),
   ),
   rule: Schema.optional(
@@ -52,8 +51,11 @@ export const RulesTool = Tool.define<typeof Parameters, Metadata, never>(
           const cwd = inst.directory
 
           const isHome = path.resolve(cwd) === path.resolve(os.homedir())
-          const hasGit = inst.project.vcs === "git" || fs.existsSync(path.join(cwd, ".git"))
-          const isProjectSession = hasGit && !isHome
+          const isDefault = cwd === defaultProjectDirectory()
+          // The home/default session and the desktop app's Default Project are
+          // not project sessions: an unqualified add belongs in the global rule
+          // files. Only an explicit scope=project request lands in project rules.
+          const isProjectSession = !isHome && !isDefault
 
           const scope: "project" | "global" =
             rawScope === "project"

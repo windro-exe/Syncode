@@ -86,6 +86,10 @@ import type {
   GlobalEventResponses,
   GlobalHealthErrors,
   GlobalHealthResponses,
+  GlobalRulesDeleteErrors,
+  GlobalRulesDeleteResponses,
+  GlobalRulesErrors,
+  GlobalRulesResponses,
   GlobalUpgradeErrors,
   GlobalUpgradeResponses,
   InstanceDisposeErrors,
@@ -175,6 +179,10 @@ import type {
   QuestionReplyErrors,
   QuestionReplyResponses,
   QuestionV2Reply,
+  RulesDeleteErrors,
+  RulesDeleteResponses,
+  RulesListErrors,
+  RulesListResponses,
   SessionAbortErrors,
   SessionAbortResponses,
   SessionChildrenErrors,
@@ -1315,6 +1323,43 @@ export class Config extends HeyApiClient {
   }
 }
 
+export class Rules extends HeyApiClient {
+  /**
+   * Delete a global rule
+   *
+   * Remove a global operational rule from the rule file it lives in.
+   */
+  public delete<ThrowOnError extends boolean = false>(
+    parameters?: {
+      rule?: string
+      filePath?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "rule" },
+            { in: "body", key: "filePath" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<GlobalRulesDeleteResponses, GlobalRulesDeleteErrors, ThrowOnError>({
+      url: "/global/rules",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Global extends HeyApiClient {
   /**
    * Get health
@@ -1336,6 +1381,18 @@ export class Global extends HeyApiClient {
   public event<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).sse.get<GlobalEventResponses, GlobalEventErrors, ThrowOnError>({
       url: "/global/event",
+      ...options,
+    })
+  }
+
+  /**
+   * List global rules
+   *
+   * Retrieve global operational rules from the configured rule files and settings.
+   */
+  public rules<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GlobalRulesResponses, GlobalRulesErrors, ThrowOnError>({
+      url: "/global/rules",
       ...options,
     })
   }
@@ -1379,6 +1436,11 @@ export class Global extends HeyApiClient {
   private _config?: Config
   get config(): Config {
     return (this._config ??= new Config({ client: this.client }))
+  }
+
+  private _rules?: Rules
+  get rules2(): Rules {
+    return (this._rules ??= new Rules({ client: this.client }))
   }
 }
 
@@ -2246,6 +2308,77 @@ export class Formatter extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<FormatterStatusResponses, FormatterStatusErrors, ThrowOnError>({
       url: "/formatter",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Rules2 extends HeyApiClient {
+  /**
+   * Delete a project rule
+   *
+   * Remove a project operational rule from the rule file it lives in.
+   */
+  public delete<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      rule?: string
+      filePath?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "rule" },
+            { in: "body", key: "filePath" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<RulesDeleteResponses, RulesDeleteErrors, ThrowOnError>({
+      url: "/rules",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * List project rules
+   *
+   * Retrieve project operational rules for the current workspace.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<RulesListResponses, RulesListErrors, ThrowOnError>({
+      url: "/rules",
       ...options,
       ...params,
     })
@@ -7160,6 +7293,11 @@ export class OpencodeClient extends HeyApiClient {
   private _formatter?: Formatter
   get formatter(): Formatter {
     return (this._formatter ??= new Formatter({ client: this.client }))
+  }
+
+  private _rules?: Rules2
+  get rules(): Rules2 {
+    return (this._rules ??= new Rules2({ client: this.client }))
   }
 
   private _mcp?: Mcp

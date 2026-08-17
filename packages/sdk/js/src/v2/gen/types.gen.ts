@@ -243,6 +243,7 @@ export type UserMessage = {
   time: {
     created: number
   }
+  pruned?: number
   format?: OutputFormat
   summary?: {
     title?: string
@@ -338,6 +339,7 @@ export type AssistantMessage = {
     created: number
     completed?: number
   }
+  pruned?: number
   error?:
     | ProviderAuthError
     | UnknownError
@@ -371,6 +373,7 @@ export type AssistantMessage = {
   structured?: unknown
   variant?: string
   finish?: string
+  skill?: string
 }
 
 export type Message = UserMessage | AssistantMessage
@@ -1643,6 +1646,15 @@ export type GlobalEvent = {
  */
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 
+export type CustomPrompt = {
+  id?: string
+  name?: string
+  providerID: string
+  modelID: string
+  prompt: string
+  enabled?: boolean
+}
+
 /**
  * Server configuration for opencode serve and web commands
  */
@@ -1887,6 +1899,7 @@ export type Config = {
   $schema?: string
   shell?: string
   logLevel?: LogLevel
+  custom_prompts?: Array<CustomPrompt>
   server?: ServerConfig
   command?: {
     [key: string]: {
@@ -1901,6 +1914,8 @@ export type Config = {
   skills?: {
     paths?: Array<string>
     urls?: Array<string>
+    router_model?: string
+    router_enabled?: boolean
   }
   references?: {
     [key: string]: string | ConfigV2ReferenceGit | ConfigV2ReferenceLocal
@@ -4125,6 +4140,7 @@ export type SessionMessageAssistant = {
     files?: Array<string>
   }
   finish?: string
+  skill?: string
   cost?: number
   tokens?: {
     input: number
@@ -7326,6 +7342,64 @@ export type GlobalConfigUpdateResponses = {
 
 export type GlobalConfigUpdateResponse = GlobalConfigUpdateResponses[keyof GlobalConfigUpdateResponses]
 
+export type GlobalRulesDeleteData = {
+  body?: {
+    rule: string
+    filePath: string
+  }
+  path?: never
+  query?: never
+  url: "/global/rules"
+}
+
+export type GlobalRulesDeleteErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type GlobalRulesDeleteError = GlobalRulesDeleteErrors[keyof GlobalRulesDeleteErrors]
+
+export type GlobalRulesDeleteResponses = {
+  /**
+   * Rule removed
+   */
+  200: boolean
+}
+
+export type GlobalRulesDeleteResponse = GlobalRulesDeleteResponses[keyof GlobalRulesDeleteResponses]
+
+export type GlobalRulesData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/rules"
+}
+
+export type GlobalRulesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GlobalRulesError = GlobalRulesErrors[keyof GlobalRulesErrors]
+
+export type GlobalRulesResponses = {
+  /**
+   * List global operational rules
+   */
+  200: Array<{
+    rule: string
+    file: string
+    path: string
+    enabled: boolean
+  }>
+}
+
+export type GlobalRulesResponse = GlobalRulesResponses[keyof GlobalRulesResponses]
+
 export type GlobalDisposeData = {
   body?: never
   path?: never
@@ -8367,6 +8441,12 @@ export type AppSkillsResponses = {
     description?: string
     location: string
     content: string
+    rules: Array<string>
+    sections: Array<{
+      id: string
+      title?: string
+      content: string
+    }>
   }>
 }
 
@@ -8427,6 +8507,70 @@ export type FormatterStatusResponses = {
 }
 
 export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterStatusResponses]
+
+export type RulesDeleteData = {
+  body?: {
+    rule: string
+    filePath: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/rules"
+}
+
+export type RulesDeleteErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type RulesDeleteError = RulesDeleteErrors[keyof RulesDeleteErrors]
+
+export type RulesDeleteResponses = {
+  /**
+   * Rule removed
+   */
+  200: boolean
+}
+
+export type RulesDeleteResponse = RulesDeleteResponses[keyof RulesDeleteResponses]
+
+export type RulesListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/rules"
+}
+
+export type RulesListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type RulesListError = RulesListErrors[keyof RulesListErrors]
+
+export type RulesListResponses = {
+  /**
+   * List project operational rules
+   */
+  200: Array<{
+    rule: string
+    file: string
+    path: string
+    enabled: boolean
+  }>
+}
+
+export type RulesListResponse = RulesListResponses[keyof RulesListResponses]
 
 export type McpStatusData = {
   body?: never

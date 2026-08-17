@@ -5,10 +5,11 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { loadGlobalRules, removeRule } from "@/session/rules"
 import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
@@ -89,6 +90,31 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       return result.info
     })
 
+    const rules = Effect.fn("GlobalHttpApi.rules")(function* () {
+      return yield* Effect.sync(() =>
+        loadGlobalRules().flatMap((file) =>
+          file.rules.map((rule) => ({
+            rule,
+            file: file.name,
+            path: file.path,
+            enabled: file.enabled,
+          })),
+        ),
+      )
+    })
+
+    const rulesDelete = Effect.fn("GlobalHttpApi.rulesDelete")(function* (ctx: {
+      payload: { rule: string; filePath: string }
+    }) {
+      const result = removeRule({
+        scope: "global",
+        rule: ctx.payload.rule,
+        filePath: ctx.payload.filePath,
+      })
+      if (!result.success) return yield* Effect.fail(new HttpApiError.BadRequest({}))
+      return true
+    })
+
     const dispose = Effect.fn("GlobalHttpApi.dispose")(function* () {
       yield* disposeAllInstancesAndEmitGlobalDisposed()
       return true
@@ -150,6 +176,8 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       .handleRaw("event", event)
       .handle("configGet", configGet)
       .handle("configUpdate", configUpdate)
+      .handle("rules", rules)
+      .handle("rulesDelete", rulesDelete)
       .handle("dispose", dispose)
       .handleRaw("upgrade", upgradeRaw)
   }),

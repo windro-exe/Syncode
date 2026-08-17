@@ -62,10 +62,25 @@ const GlobalUpgradeResult = Schema.Union([
   }),
 ])
 
+export const GlobalRule = Schema.Struct({
+  rule: Schema.String,
+  file: Schema.String,
+  path: Schema.String,
+  enabled: Schema.Boolean,
+})
+
+export const GlobalRules = Schema.Array(GlobalRule)
+
+export const GlobalRuleDeleteInput = Schema.Struct({
+  rule: Schema.String,
+  filePath: Schema.String,
+})
+
 export const GlobalPaths = {
   health: "/global/health",
   event: "/global/event",
   config: "/global/config",
+  rules: "/global/rules",
   dispose: "/global/dispose",
   upgrade: "/global/upgrade",
 } as const
@@ -109,6 +124,26 @@ export const GlobalApi = HttpApi.make("global").add(
           identifier: "global.config.update",
           summary: "Update global configuration",
           description: "Update global OpenCode configuration settings and preferences.",
+          }),
+        ),
+      HttpApiEndpoint.get("rules", GlobalPaths.rules, {
+        success: described(GlobalRules, "List global operational rules"),
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.rules",
+          summary: "List global rules",
+          description: "Retrieve global operational rules from the configured rule files and settings.",
+        }),
+      ),
+      HttpApiEndpoint.delete("rulesDelete", GlobalPaths.rules, {
+        payload: GlobalRuleDeleteInput,
+        success: described(Schema.Boolean, "Rule removed"),
+        error: HttpApiError.BadRequest,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.rules.delete",
+          summary: "Delete a global rule",
+          description: "Remove a global operational rule from the rule file it lives in.",
         }),
       ),
       HttpApiEndpoint.post("dispose", GlobalPaths.dispose, {
