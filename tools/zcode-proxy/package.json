@@ -1,0 +1,15 @@
+{
+  "name": "zcode-proxy",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Local OpenAI-compatible proxy for Z.AI/BigModel GLM Coding Plan + Start Plan (account OAuth)",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node proxy.mjs",
+    "auth": "node proxy.mjs auth login"
+  },
+  "dependencies": {
+    "jsdom": "^26.0.0"
+  }
+}
