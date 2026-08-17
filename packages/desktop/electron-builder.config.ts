@@ -91,9 +91,11 @@ const getBase = (appId: string): Configuration => ({
   },
   win: {
     icon: `resources/icons/icon.ico`,
-    signtoolOptions: {
-      sign: signWindows,
-    },
+    // Only wire signing under CI. Locally signWindows is a no-op, but merely
+    // declaring signtoolOptions makes electron-builder download+extract the
+    // winCodeSign tooling, which fails on Windows without admin/Developer Mode
+    // (it contains macOS symlinks). Omit it locally so unsigned local builds work.
+    ...(process.env.GITHUB_ACTIONS === "true" ? { signtoolOptions: { sign: signWindows } } : {}),
     target: ["nsis"],
     verifyUpdateCodeSignature: false,
   },
@@ -138,7 +140,6 @@ function getConfig() {
         appId,
         productName: "OpenCode Beta",
         protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
         deb: { fpm: [metainfoFpm(appId)] },
         rpm: { packageName: "opencode-beta", fpm: [metainfoFpm(appId)] },
       }
@@ -149,7 +150,9 @@ function getConfig() {
         appId,
         productName: "OpenCode",
         protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
+        // wnxd fork: no `publish` feed — local fork must never auto-update from
+        // upstream anomalyco releases (would wipe local features). Updater is
+        // also hard-disabled in src/main/constants.ts.
         deb: { fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
         rpm: { packageName: "opencode", fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
       }

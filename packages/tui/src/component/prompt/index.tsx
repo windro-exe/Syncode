@@ -273,11 +273,16 @@ export function Prompt(props: PromptProps) {
     if (tokens <= 0) return
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const limit = model?.limit.context
+    const percent = limit ? Math.round((tokens / limit) * 100) : undefined
+    const pct = percent !== undefined ? `${percent}%` : undefined
     const cost = session?.cost ?? 0
     return {
       context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
+      percent,
+      tokens,
+      limit,
     }
   })
 
@@ -368,10 +373,9 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
-        title: "Paste",
+        title: "Paste image or text from clipboard",
         name: "prompt.paste",
         category: "Prompt",
-        hidden: true,
         run: async (ctx: CommandContext<Renderable, KeyEvent>) => {
           ctx.event.preventDefault()
           ctx.event.stopPropagation()
@@ -1642,6 +1646,37 @@ export function Prompt(props: PromptProps) {
                 <text fg={theme.accent}>(new working copy)</text>
               </box>
             </Match>
+            <Match when={usage()?.percent !== undefined ? usage() : undefined}>
+              {(item) => {
+                const percent = () => Math.min(100, Math.max(0, item().percent ?? 0))
+                const width = 10
+                const filled = () => Math.min(width, Math.max(0, Math.round((percent() / 100) * width)))
+                const color = () => {
+                  const p = percent()
+                  if (p >= 85) return theme.error
+                  if (p >= 70) return theme.warning
+                  return theme.success
+                }
+                const label = () => {
+                  const it = item()
+                  const cur = Locale.number(it.tokens ?? 0)
+                  const total = it.limit ? Locale.number(it.limit) : undefined
+                  const ratio = total ? `${cur}/${total}` : cur
+                  return `${ratio} (${percent()}%)`
+                }
+                return (
+                  <box paddingLeft={1} flexDirection="row" gap={1}>
+                    <text fg={color()} wrapMode="none">
+                      {"━".repeat(filled())}
+                      <span style={{ fg: theme.textMuted }}>{"─".repeat(width - filled())}</span>
+                    </text>
+                    <text fg={theme.textMuted} wrapMode="none">
+                      {label()}
+                    </text>
+                  </box>
+                )
+              }}
+            </Match>
             <Match when={true}>
               {props.hint ?? (
                 <Show when={props.sessionID}>
@@ -1662,10 +1697,10 @@ export function Prompt(props: PromptProps) {
               <Switch>
                 <Match when={store.mode === "normal"}>
                   <Switch>
-                    <Match when={usage()}>
+                    <Match when={usage()?.cost ? usage() : undefined}>
                       {(item) => (
                         <text fg={theme.textMuted} wrapMode="none">
-                          {[item().context, item().cost].filter(Boolean).join(" · ")}
+                          {item().cost}
                         </text>
                       )}
                     </Match>

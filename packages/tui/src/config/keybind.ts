@@ -159,7 +159,11 @@ export const Definitions = {
   workspace_set: keybind("none", "Set workspace"),
 
   input_clear: keybind("ctrl+c", "Clear input field"),
-  input_paste: keybind({ key: "ctrl+v", preventDefault: false }, "Paste from clipboard"),
+  // ctrl+v alone is unreliable on Windows: terminals bind it to their own paste, which
+  // is text-only, so an image-only clipboard produces no keypress AND no bracketed paste
+  // (legacy conhost and Windows Terminal 1.25+ both go silent). The leader binding always
+  // reaches the app, so image paste stays reachable no matter what the terminal does.
+  input_paste: keybind([{ key: "ctrl+v", preventDefault: false }, "<leader>v"], "Paste from clipboard"),
   input_submit: keybind("return", "Submit input"),
   input_newline: keybind("shift+return,ctrl+return,alt+return,ctrl+j", "Insert newline in input"),
   input_move_left: keybind("left,ctrl+b", "Move cursor left in input"),

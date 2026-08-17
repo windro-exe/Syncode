@@ -53,6 +53,8 @@ import { DialogConfirm } from "../../ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { DialogContext } from "../../component/dialog-context"
+import { DialogBtw } from "../../component/dialog-btw"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { filetype } from "../../util/filetype"
@@ -583,6 +585,75 @@ export function Session() {
           providerID: selectedModel.providerID,
         })
         dialog.clear()
+      },
+    },
+    {
+      title: "Save a fact into memory",
+      value: "session.remember",
+      category: "Session",
+      slash: {
+        name: "remember",
+      },
+      run: () => {
+        prompt?.set({
+          input: "Save a durable fact into persistent memory using the memory tool: ",
+          parts: [],
+        })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Show context window breakdown",
+      value: "session.context",
+      category: "Session",
+      slash: {
+        name: "context",
+      },
+      run: () => {
+        dialog.replace(() => <DialogContext sessionID={route.sessionID} />)
+      },
+    },
+    {
+      title: "List background tasks",
+      value: "session.tasks",
+      category: "Session",
+      slash: {
+        name: "tasks",
+        aliases: ["bashes"],
+      },
+      run: () => {
+        prompt?.set({
+          input: "List the background tasks running in this session using the tasks tool.",
+          parts: [],
+        })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Set an autonomous completion goal",
+      value: "session.goal",
+      category: "Session",
+      slash: {
+        name: "goal",
+      },
+      run: () => {
+        prompt?.set({
+          input:
+            "Set a completion goal with the goal tool (action=set) and then work autonomously until it is met. Goal condition: ",
+          parts: [],
+        })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Ask a quick side question (concurrent, tool-less, ephemeral)",
+      value: "session.btw",
+      category: "Session",
+      slash: {
+        name: "btw",
+      },
+      run: () => {
+        dialog.replace(() => <DialogBtw sessionID={route.sessionID} />)
       },
     },
     {
@@ -1821,12 +1892,12 @@ function GenericTool(props: ToolProps) {
       when={props.output && ctx.showGenericToolOutput()}
       fallback={
         <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
-          {props.tool} {input(props.input)}
+          {props.tool} {input(props.input, toolOmit(props.tool))}
         </InlineTool>
       }
     >
       <BlockTool
-        title={`# ${props.tool} ${input(props.input)}`}
+        title={`# ${props.tool} ${input(props.input, toolOmit(props.tool))}`}
         part={props.part}
         onClick={collapsed().overflow ? () => setExpanded((prev) => !prev) : undefined}
       >
@@ -2631,7 +2702,20 @@ function input(input: Record<string, unknown>, omit?: string[]): string {
     return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
   })
   if (primitives.length === 0) return ""
-  return `[${primitives.map(([key, value]) => `${key}=${value}`).join(", ")}]`
+  return `[${primitives
+    .map(([key, value]) => {
+      if (typeof value === "string" && value.includes("\n")) {
+        const firstLine = value.split(/\r?\n/)[0]
+        return `${key}=${firstLine}…`
+      }
+      return `${key}=${value}`
+    })
+    .join(", ")}]`
+}
+
+function toolOmit(tool: string): string[] | undefined {
+  if (tool === "memory") return ["old_str"]
+  return undefined
 }
 
 function stringValue(value: unknown) {
