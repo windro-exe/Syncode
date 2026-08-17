@@ -228,7 +228,16 @@ export function createMainWindow(id: string = randomUUID()) {
 
   win.once("ready-to-show", () => {
     win.show()
+    win.focus()
   })
+
+  // Guaranteed fallback display if ready-to-show is delayed
+  setTimeout(() => {
+    if (!win.isDestroyed() && !win.isVisible()) {
+      win.show()
+      win.focus()
+    }
+  }, 2500)
 
   return win
 }

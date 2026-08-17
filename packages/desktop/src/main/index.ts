@@ -208,10 +208,14 @@ const main = Effect.gen(function* () {
       logger.log("deep link received via second-instance", { urls })
       emitDeepLinks(urls)
     }
-    const win = getLastFocusedWindow()
+    const all = BrowserWindow.getAllWindows()
+    const win = getLastFocusedWindow() ?? all[0]
     if (win) {
+      if (win.isMinimized()) win.restore()
       win.show()
       win.focus()
+    } else {
+      restoreMainWindows()
     }
   })
 
