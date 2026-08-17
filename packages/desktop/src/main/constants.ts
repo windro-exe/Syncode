@@ -1,5 +1,5 @@
 type Channel = "dev" | "beta" | "prod"
-const raw = import.meta.env.OPENCODE_CHANNEL
+const raw = (process.env.OPENCODE_CHANNEL as string) ?? (import.meta.env.OPENCODE_CHANNEL as string)
 export const CHANNEL: Channel = raw === "dev" || raw === "beta" || raw === "prod" ? raw : "prod"
 
 // wnxd fork: HARD-DISABLED on every channel. The in-app updater pulls upstream
