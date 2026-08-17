@@ -13,6 +13,7 @@ import { usePermission } from "@/context/permission"
 import { type ContextItem, type ImageAttachmentPart, type Prompt, type usePrompt } from "@/context/prompt"
 import { useSDK, type DirectorySDK } from "@/context/sdk"
 import { useSync, type DirectorySync } from "@/context/sync"
+import { useSettings } from "@/context/settings"
 import { Identifier } from "@/utils/id"
 import { Worktree as WorktreeState } from "@/utils/worktree"
 import { buildRequestParts } from "./build-request-parts"
@@ -49,6 +50,7 @@ type FollowupSendInput = {
   messageID?: string
   optimisticBusy?: boolean
   before?: () => Promise<boolean> | boolean
+  system?: string
 }
 
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
@@ -171,6 +173,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       agent: input.draft.agent,
       model: input.draft.model,
       variant: input.draft.variant,
+      system: input.system,
       legacyParts: requestParts,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
@@ -241,6 +244,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const prompt = input.prompt
   const layout = useLayout()
   const language = useLanguage()
+  const settings = useSettings()
   const params = useParams()
   const [search] = useSearchParams<{ draftId?: string }>()
   const tabs = useTabs()
@@ -616,12 +620,23 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return true
     }
 
+    const customPrompts = settings.customPrompts?.list?.() ?? []
+    const activePrompts = customPrompts
+      .filter((p) => p.enabled)
+      .filter((p) => p.providerID === "*" || p.providerID === currentModel.provider.id)
+      .filter((p) => p.modelID === "*" || p.modelID === currentModel.id)
+      .map((p) => p.prompt.trim())
+      .filter(Boolean)
+
+    const customSystemPrompt = activePrompts.length > 0 ? activePrompts.join("\n\n") : undefined
+
     void sendFollowupDraft({
       api: sdk().api.session,
       sync: sync(),
       serverSync: serverSync(),
       draft,
       messageID,
+      system: customSystemPrompt,
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
     }).catch((err) => {

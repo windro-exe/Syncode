@@ -1723,11 +1723,20 @@ export default function Page() {
       if (input.manual) setFollowup("paused", input.sessionID, undefined)
       setFollowup("failed", input.sessionID, undefined)
 
+      const customPrompts = settings.customPrompts?.list?.() ?? []
+      const activePrompts = customPrompts
+        .filter((p) => p.enabled)
+        .filter((p) => p.providerID === "*" || p.providerID === item.model.providerID)
+        .filter((p) => p.modelID === "*" || p.modelID === item.model.modelID)
+        .map((p) => p.prompt.trim())
+        .filter(Boolean)
+
       const ok = await sendFollowupDraft({
         api: sdk().api.session,
         sync: sync(),
         serverSync: serverSync(),
         draft: item,
+        system: activePrompts.length > 0 ? activePrompts.join("\n\n") : undefined,
         optimisticBusy: item.sessionDirectory === sdk().directory,
       }).catch((err) => {
         setFollowup("failed", input.sessionID, input.id)

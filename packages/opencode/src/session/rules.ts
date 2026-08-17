@@ -154,6 +154,42 @@ export function loadGlobalRules(): RuleFile[] {
     }
   }
 
+  // Also check desktop default.dat store files if present
+  const datDirs = [
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop.dev") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode") : null,
+    path.join(os.homedir(), ".config", "opencode"),
+  ].filter(Boolean) as string[]
+
+  for (const datDir of datDirs) {
+    const datPath = path.join(datDir, "default.dat")
+    if (fs.existsSync(datPath)) {
+      try {
+        const raw = fs.readFileSync(datPath, "utf8")
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed["settings.v3"] === "string") {
+          const settings = JSON.parse(parsed["settings.v3"])
+          if (Array.isArray(settings.globalRules)) {
+            const rules = settings.globalRules
+              .filter((item: any) => item && typeof item.rule === "string" && item.enabled !== false)
+              .map((item: any) => item.rule as string)
+            if (rules.length > 0) {
+              results.push({
+                name: "settings.globalRules",
+                path: datPath,
+                rules,
+                enabled: true,
+              })
+            }
+          }
+        }
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
   // Also check JSON configs if present
   const jsonPaths = [
     path.join(os.homedir(), ".config", "opencode", "global_rules.json"),
