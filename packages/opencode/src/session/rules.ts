@@ -272,3 +272,89 @@ export function formatRulesSystemPrompt(opts: {
 
   return sections.join("\n")
 }
+
+export function addRule(opts: {
+  scope: "project" | "global"
+  rule: string
+  cwd?: string
+  file?: string
+}): { success: boolean; filePath: string; rule: string } {
+  const cleanRule = opts.rule.trim()
+  if (!cleanRule) throw new Error("Rule content cannot be empty")
+
+  let targetDir = ""
+  let targetFile = ""
+
+  if (opts.scope === "project") {
+    const cwd = opts.cwd || process.cwd()
+    targetDir = path.join(cwd, ".syncode", "rules")
+    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "project.md"
+    targetFile = path.join(targetDir, fileName)
+  } else {
+    targetDir = path.join(os.homedir(), ".syncode", "rules")
+    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "global.md"
+    targetFile = path.join(targetDir, fileName)
+  }
+
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true })
+  }
+
+  let existingRules: string[] = []
+  let frontmatter = ""
+
+  if (fs.existsSync(targetFile)) {
+    try {
+      const raw = fs.readFileSync(targetFile, "utf8")
+      const split = splitFrontmatter(raw)
+      frontmatter = split.frontmatter
+      existingRules = parseRulesFromMarkdown(raw)
+    } catch {}
+  }
+
+  if (!existingRules.includes(cleanRule)) {
+    existingRules.push(cleanRule)
+  }
+
+  const updatedMarkdown = serializeRulesToMarkdown(existingRules, frontmatter)
+  fs.writeFileSync(targetFile, updatedMarkdown, "utf8")
+
+  return { success: true, filePath: targetFile, rule: cleanRule }
+}
+
+export function removeRule(opts: {
+  scope: "project" | "global"
+  rule: string
+  cwd?: string
+  file?: string
+}): { success: boolean; filePath: string; remainingCount: number } {
+  const cleanRule = opts.rule.trim()
+  let targetDir = ""
+  let targetFile = ""
+
+  if (opts.scope === "project") {
+    const cwd = opts.cwd || process.cwd()
+    targetDir = path.join(cwd, ".syncode", "rules")
+    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "project.md"
+    targetFile = path.join(targetDir, fileName)
+  } else {
+    targetDir = path.join(os.homedir(), ".syncode", "rules")
+    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "global.md"
+    targetFile = path.join(targetDir, fileName)
+  }
+
+  if (!fs.existsSync(targetFile)) {
+    return { success: false, filePath: targetFile, remainingCount: 0 }
+  }
+
+  const raw = fs.readFileSync(targetFile, "utf8")
+  const split = splitFrontmatter(raw)
+  const existingRules = parseRulesFromMarkdown(raw)
+  const filtered = existingRules.filter((r) => r.toLowerCase() !== cleanRule.toLowerCase())
+
+  const updatedMarkdown = serializeRulesToMarkdown(filtered, split.frontmatter)
+  fs.writeFileSync(targetFile, updatedMarkdown, "utf8")
+
+  return { success: true, filePath: targetFile, remainingCount: filtered.length }
+}
+

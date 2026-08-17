@@ -22,6 +22,7 @@ import { TasksTool } from "./tasks"
 import { MonitorTool } from "./monitor"
 import { ContextTool } from "./context"
 import { GoalTool } from "./goal"
+import { RulesTool } from "./rules"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -129,6 +130,7 @@ const layer = Layer.effect(
     const monitortool = yield* MonitorTool
     const contexttool = yield* ContextTool
     const goaltool = yield* GoalTool
+    const rulestool = yield* RulesTool
     const agent = yield* Agent.Service
     const codeMode = flags.experimentalCodeMode ? yield* Effect.promise(() => import("./code-mode")) : undefined
     const codeModeTool = codeMode ? yield* codeMode.CodeModeTool : undefined
@@ -240,6 +242,7 @@ const layer = Layer.effect(
           monitor: Tool.init(monitortool),
           context: Tool.init(contexttool),
           goal: Tool.init(goaltool),
+          rules: Tool.init(rulestool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -269,6 +272,7 @@ const layer = Layer.effect(
             tool.monitor,
             tool.context,
             tool.goal,
+            tool.rules,
             tool.patch,
             ...(tool.execute ? [tool.execute] : []),
             ...(flags.experimentalLspTool ? [tool.lsp] : []),

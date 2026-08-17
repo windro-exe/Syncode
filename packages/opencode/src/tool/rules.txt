@@ -1,0 +1,1 @@
+Manage persistent operational rules (project-specific or global). Use this tool when the user explicitly requests to add, list, or remove rules (e.g. 'always use bun', 'never commit without asking', 'add a rule that...', 'list current rules'). Rules are strictly enforced as negative constraints and instruction invariants across sessions.
