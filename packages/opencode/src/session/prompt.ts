@@ -1508,8 +1508,8 @@ const layer = Layer.effect(
               sys.memory(sessionID).pipe(Effect.orElseSucceed(() => undefined)),
             ])
             const system = [
-              ...env,
               ...instructions,
+              ...env,
               ...(memory ? [memory] : []),
               ...(mcpInstructions ? [mcpInstructions] : []),
               ...(skills ? [skills] : []),
