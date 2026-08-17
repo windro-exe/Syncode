@@ -8,6 +8,10 @@ import { SettingsGeneralV2 } from "./general"
 import { SettingsKeybinds } from "../settings-keybinds"
 import { SettingsProvidersV2 } from "./providers"
 import { SettingsModelsV2 } from "./models"
+import { SettingsPromptsV2 } from "./prompts"
+import { SettingsAppearanceV2 } from "./appearance"
+import { SettingsCustomizationsV2 } from "./customizations"
+import { SettingsAboutV2 } from "./about"
 import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -61,9 +65,27 @@ export const DialogSettings: Component<{
                       <Icon name="sliders" />
                       {language.t("settings.tab.general")}
                     </TabsV2.Trigger>
+                    <TabsV2.Trigger value="appearance">
+                      <Icon name="photo" />
+                      Appearance
+                    </TabsV2.Trigger>
                     <TabsV2.Trigger value="shortcuts">
                       <Icon name="keyboard" />
                       {language.t("settings.tab.shortcuts")}
+                    </TabsV2.Trigger>
+                  </div>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <TabsV2.SectionTitle>Customizations</TabsV2.SectionTitle>
+                  <div class="flex flex-col gap-1.5 w-full">
+                    <TabsV2.Trigger value="prompts">
+                      <Icon name="prompt" />
+                      Custom Prompts
+                    </TabsV2.Trigger>
+                    <TabsV2.Trigger value="customizations">
+                      <Icon name="brain" />
+                      Skills & Rules
                     </TabsV2.Trigger>
                   </div>
                 </div>
@@ -85,19 +107,38 @@ export const DialogSettings: Component<{
                     </TabsV2.Trigger>
                   </div>
                 </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <TabsV2.SectionTitle>System</TabsV2.SectionTitle>
+                  <div class="flex flex-col gap-1.5 w-full">
+                    <TabsV2.Trigger value="about">
+                      <Icon name="shield" />
+                      About Syncode
+                    </TabsV2.Trigger>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="settings-v2-nav-footer">
               <span>{language.t("app.name.desktop")}</span>
-              <span>v{platform.version}</span>
+              <span>1.19.0-wnxd-v2</span>
             </div>
           </div>
         </TabsV2.List>
         <TabsV2.Content value="general" class="settings-v2-panel">
           <SettingsGeneralV2 sessionID={props.sessionID} />
         </TabsV2.Content>
+        <TabsV2.Content value="appearance" class="settings-v2-panel">
+          <SettingsAppearanceV2 />
+        </TabsV2.Content>
         <TabsV2.Content value="shortcuts" class="settings-v2-panel">
           <SettingsKeybinds v2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="prompts" class="settings-v2-panel">
+          <SettingsPromptsV2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="customizations" class="settings-v2-panel">
+          <SettingsCustomizationsV2 />
         </TabsV2.Content>
         <TabsV2.Content value="servers" class="settings-v2-panel">
           <SettingsServersV2 />
@@ -107,6 +148,9 @@ export const DialogSettings: Component<{
         </TabsV2.Content>
         <TabsV2.Content value="models" class="settings-v2-panel">
           <SettingsModelsV2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="about" class="settings-v2-panel">
+          <SettingsAboutV2 />
         </TabsV2.Content>
       </TabsV2>
     </Dialog>

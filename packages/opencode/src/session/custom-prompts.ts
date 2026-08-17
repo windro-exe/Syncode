@@ -15,14 +15,30 @@
 // matching entry wins (CLI argv order).
 
 import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 
-interface CustomPrompt {
+export interface CustomPrompt {
+  id?: string
+  name?: string
   providerID: string
   modelID: string
   prompt: string
+  enabled?: boolean
 }
 
 let cached: CustomPrompt[] | undefined
+
+function userPromptFilePaths(): string[] {
+  const home = os.homedir()
+  const paths: string[] = []
+  if (process.env.APPDATA) {
+    paths.push(path.join(process.env.APPDATA, "opencode", "custom_prompts.json"))
+  }
+  paths.push(path.join(home, ".config", "opencode", "custom_prompts.json"))
+  paths.push(path.join(home, ".local", "state", "opencode", "custom_prompts.json"))
+  return paths
+}
 
 function readSource(): string | undefined {
   const filePath = process.env.OPENCODE_CUSTOM_PROMPTS_FILE
@@ -33,7 +49,19 @@ function readSource(): string | undefined {
       return undefined
     }
   }
-  return process.env.OPENCODE_CUSTOM_PROMPTS
+  if (process.env.OPENCODE_CUSTOM_PROMPTS) {
+    return process.env.OPENCODE_CUSTOM_PROMPTS
+  }
+  for (const p of userPromptFilePaths()) {
+    try {
+      if (fs.existsSync(p)) {
+        return fs.readFileSync(p, "utf8")
+      }
+    } catch {
+      // ignore read failure and try next
+    }
+  }
+  return undefined
 }
 
 function load(): CustomPrompt[] {
@@ -55,7 +83,8 @@ function load(): CustomPrompt[] {
         typeof e === "object" &&
         typeof e.providerID === "string" &&
         typeof e.modelID === "string" &&
-        typeof e.prompt === "string",
+        typeof e.prompt === "string" &&
+        e.enabled !== false,
     )
     return cached
   } catch {

@@ -10,6 +10,10 @@ import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
 import { SettingsServers } from "./settings-servers"
+import { SettingsPromptsV2 } from "./settings-v2/prompts"
+import { SettingsAppearanceV2 } from "./settings-v2/appearance"
+import { SettingsCustomizationsV2 } from "./settings-v2/customizations"
+import { SettingsAboutV2 } from "./settings-v2/about"
 
 export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
   const language = useLanguage()
@@ -41,13 +45,27 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
                       <Icon name="sliders" />
                       {language.t("settings.tab.general")}
                     </Tabs.Trigger>
+                    <Tabs.Trigger value="appearance">
+                      <Icon name="photo" />
+                      Appearance
+                    </Tabs.Trigger>
                     <Tabs.Trigger value="shortcuts">
                       <Icon name="keyboard" />
                       {language.t("settings.tab.shortcuts")}
                     </Tabs.Trigger>
-                    <Tabs.Trigger value="servers">
-                      <Icon name="server" />
-                      {language.t("status.popover.tab.servers")}
+                  </div>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <Tabs.SectionTitle>Customizations</Tabs.SectionTitle>
+                  <div class="flex flex-col gap-1.5 w-full">
+                    <Tabs.Trigger value="prompts">
+                      <Icon name="prompt" />
+                      Custom Prompts
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="customizations">
+                      <Icon name="brain" />
+                      Skills & Rules
                     </Tabs.Trigger>
                   </div>
                 </div>
@@ -55,6 +73,10 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
                 <div class="flex flex-col gap-1.5">
                   <Tabs.SectionTitle>{language.t("settings.section.server")}</Tabs.SectionTitle>
                   <div class="flex flex-col gap-1.5 w-full">
+                    <Tabs.Trigger value="servers">
+                      <Icon name="server" />
+                      {language.t("status.popover.tab.servers")}
+                    </Tabs.Trigger>
                     <Tabs.Trigger value="providers">
                       <Icon name="providers" />
                       {language.t("settings.providers.title")}
@@ -65,19 +87,38 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
                     </Tabs.Trigger>
                   </div>
                 </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <Tabs.SectionTitle>System</Tabs.SectionTitle>
+                  <div class="flex flex-col gap-1.5 w-full">
+                    <Tabs.Trigger value="about">
+                      <Icon name="shield" />
+                      About Syncode
+                    </Tabs.Trigger>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="flex flex-col gap-1 pl-1 py-1 text-12-medium text-text-weak">
               <span>{language.t("app.name.desktop")}</span>
-              <span class="text-11-regular">v{platform.version}</span>
+              <span class="text-11-regular">1.19.0-wnxd-v2</span>
             </div>
           </div>
         </Tabs.List>
         <Tabs.Content value="general" class="no-scrollbar">
           <SettingsGeneral />
         </Tabs.Content>
+        <Tabs.Content value="appearance" class="no-scrollbar">
+          <SettingsAppearanceV2 />
+        </Tabs.Content>
         <Tabs.Content value="shortcuts" class="no-scrollbar">
           <SettingsKeybinds />
+        </Tabs.Content>
+        <Tabs.Content value="prompts" class="no-scrollbar">
+          <SettingsPromptsV2 />
+        </Tabs.Content>
+        <Tabs.Content value="customizations" class="no-scrollbar">
+          <SettingsCustomizationsV2 />
         </Tabs.Content>
         <Tabs.Content value="servers" class="no-scrollbar">
           <SettingsServers />
@@ -87,6 +128,9 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
         </Tabs.Content>
         <Tabs.Content value="models" class="no-scrollbar">
           <SettingsModels />
+        </Tabs.Content>
+        <Tabs.Content value="about" class="no-scrollbar">
+          <SettingsAboutV2 />
         </Tabs.Content>
       </Tabs>
     </Dialog>

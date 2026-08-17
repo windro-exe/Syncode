@@ -19,6 +19,26 @@ export interface SoundSettings {
   errors: string
 }
 
+export interface CustomPromptSetting {
+  id: string
+  name: string
+  providerID: string
+  modelID: string
+  prompt: string
+  enabled: boolean
+}
+
+export interface SyncodeSettings {
+  skillRouter: boolean
+  routerModel: string
+  autoMemory: boolean
+  goalIterations: number
+  themePreset: "system" | "dark" | "light" | "midnight" | "cyberpunk" | "slate" | "obsidian"
+  accentColor: string
+  density: "compact" | "normal" | "relaxed"
+  contextBarStyle: "bar" | "percentage" | "minimal"
+}
+
 export interface Settings {
   general: {
     autoSave: boolean
@@ -46,6 +66,8 @@ export interface Settings {
     sans: string
     terminal: string
   }
+  customPrompts: CustomPromptSetting[]
+  syncode: SyncodeSettings
   keybinds: Record<string, string>
   permissions: {
     autoApprove: boolean
@@ -180,6 +202,52 @@ export function terminalFontFamily(font: string | undefined) {
   return stack(font, terminalBase)
 }
 
+export const defaultPromptPresets: CustomPromptSetting[] = [
+  {
+    id: "preset-antigravity",
+    name: "🚀 Antigravity Autonomous Agent",
+    providerID: "*",
+    modelID: "*",
+    prompt: `You are Antigravity, an elite autonomous pair programming agent engineered for deep reasoning, architectural precision, and rigorous execution.
+- Think through problems from first principles before making code changes.
+- Provide clean, production-ready code with comprehensive error handling and type safety.
+- Keep responses clear, concise, and structured.
+- Always respect existing code conventions and formatting.`,
+    enabled: false,
+  },
+  {
+    id: "preset-hermes",
+    name: "⚡ Hermes Rapid Problem Solver",
+    providerID: "*",
+    modelID: "*",
+    prompt: `You are Hermes, a blazing-fast, direct, and pragmatic software engineer.
+- Be concise, direct, and zero-fluff.
+- Give immediate, working code solutions with minimal exposition.
+- Identify bugs rapidly and output clear diffs.`,
+    enabled: false,
+  },
+  {
+    id: "preset-architect",
+    name: "🛡️ Senior Architect & Security Auditor",
+    providerID: "*",
+    modelID: "*",
+    prompt: `You are a Senior Software Architect and Application Security Auditor.
+- Analyze systems for scalability, security vulnerabilities, race conditions, and edge cases.
+- Propose robust design patterns and review code with extreme attention to detail.`,
+    enabled: false,
+  },
+  {
+    id: "preset-deep-thinker",
+    name: "🧠 Deep Thinker & First-Principles Reasoner",
+    providerID: "*",
+    modelID: "*",
+    prompt: `You are a Deep Reasoning AI Assistant.
+- Break down complex algorithms, mathematical logic, and multi-step reasoning step-by-step.
+- Challenge assumptions and find optimal solutions.`,
+    enabled: false,
+  },
+]
+
 const defaultSettings: Settings = {
   general: {
     autoSave: true,
@@ -201,6 +269,17 @@ const defaultSettings: Settings = {
     mono: "",
     sans: "",
     terminal: "",
+  },
+  customPrompts: defaultPromptPresets,
+  syncode: {
+    skillRouter: true,
+    routerModel: "small_model",
+    autoMemory: true,
+    goalIterations: 30,
+    themePreset: "system",
+    accentColor: "#3b82f6",
+    density: "normal",
+    contextBarStyle: "bar",
   },
   keybinds: {},
   permissions: {
@@ -540,6 +619,66 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         errors: withFallback(() => store.sounds?.errors, defaultSettings.sounds.errors),
         setErrors(value: string) {
           setStore("sounds", "errors", value)
+        },
+      },
+      customPrompts: {
+        list: withFallback(() => store.customPrompts, defaultSettings.customPrompts),
+        set(prompts: CustomPromptSetting[]) {
+          setStore("customPrompts", reconcile(prompts))
+        },
+        add(prompt: Omit<CustomPromptSetting, "id">) {
+          const id = `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+          const current = store.customPrompts ?? defaultSettings.customPrompts
+          setStore("customPrompts", [...current, { ...prompt, id }])
+        },
+        update(id: string, update: Partial<CustomPromptSetting>) {
+          const current = store.customPrompts ?? defaultSettings.customPrompts
+          const next = current.map((item) => (item.id === id ? { ...item, ...update } : item))
+          setStore("customPrompts", reconcile(next))
+        },
+        remove(id: string) {
+          const current = store.customPrompts ?? defaultSettings.customPrompts
+          const next = current.filter((item) => item.id !== id)
+          setStore("customPrompts", reconcile(next))
+        },
+        toggle(id: string) {
+          const current = store.customPrompts ?? defaultSettings.customPrompts
+          const next = current.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item))
+          setStore("customPrompts", reconcile(next))
+        },
+      },
+      syncode: {
+        skillRouter: withFallback(() => store.syncode?.skillRouter, defaultSettings.syncode.skillRouter),
+        setSkillRouter(value: boolean) {
+          setStore("syncode", "skillRouter", value)
+        },
+        routerModel: withFallback(() => store.syncode?.routerModel, defaultSettings.syncode.routerModel),
+        setRouterModel(value: string) {
+          setStore("syncode", "routerModel", value)
+        },
+        autoMemory: withFallback(() => store.syncode?.autoMemory, defaultSettings.syncode.autoMemory),
+        setAutoMemory(value: boolean) {
+          setStore("syncode", "autoMemory", value)
+        },
+        goalIterations: withFallback(() => store.syncode?.goalIterations, defaultSettings.syncode.goalIterations),
+        setGoalIterations(value: number) {
+          setStore("syncode", "goalIterations", value)
+        },
+        themePreset: withFallback(() => store.syncode?.themePreset, defaultSettings.syncode.themePreset),
+        setThemePreset(value: SyncodeSettings["themePreset"]) {
+          setStore("syncode", "themePreset", value)
+        },
+        accentColor: withFallback(() => store.syncode?.accentColor, defaultSettings.syncode.accentColor),
+        setAccentColor(value: string) {
+          setStore("syncode", "accentColor", value)
+        },
+        density: withFallback(() => store.syncode?.density, defaultSettings.syncode.density),
+        setDensity(value: SyncodeSettings["density"]) {
+          setStore("syncode", "density", value)
+        },
+        contextBarStyle: withFallback(() => store.syncode?.contextBarStyle, defaultSettings.syncode.contextBarStyle),
+        setContextBarStyle(value: SyncodeSettings["contextBarStyle"]) {
+          setStore("syncode", "contextBarStyle", value)
         },
       },
     }
