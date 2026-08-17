@@ -133,6 +133,126 @@ export type Provider = Schema.Schema.Type<typeof Provider>
 
 export const Event = ModelsDev.Event
 
+// ---------------------------------------------------------------------------
+// Built-in providers (Syncode)
+//
+// Providers shipped in-source so they appear in /connect and resolve with zero
+// opencode.json config. Kiro talks directly to AWS Q via the vendored provider
+// SDK (packages/opencode/src/provider/kiro, npm key "kiro"); the user only pastes
+// a `ksk_` key via /connect. Built-ins are merged into every get() result and win
+// over any same-id upstream entry so the vendored SDK binding stays authoritative.
+// ---------------------------------------------------------------------------
+
+function kiroModel(
+  id: string,
+  name: string,
+  release_date: string,
+  context: number,
+  output: number,
+  input: ("text" | "image" | "pdf")[] = ["text", "image", "pdf"],
+): Model {
+  return {
+    id,
+    name,
+    release_date,
+    attachment: input.length > 1,
+    reasoning: true,
+    temperature: true,
+    tool_call: true,
+    limit: { context, output },
+    modalities: { input, output: ["text"] },
+  }
+}
+
+function orcarouterModel(
+  id: string,
+  name: string,
+  release_date: string,
+  context: number,
+  output: number,
+  input: ("text" | "image" | "video")[] = ["text"],
+  interleaved?: { field: "reasoning_content" | "reasoning_details" },
+): Model {
+  return {
+    id,
+    name,
+    release_date,
+    attachment: input.length > 1,
+    reasoning: true,
+    temperature: true,
+    tool_call: true,
+    interleaved,
+    limit: { context, output },
+    modalities: { input, output: ["text"] },
+  }
+}
+
+export const BUILTIN_PROVIDERS: Record<string, Provider> = {
+  kiro: {
+    id: "kiro",
+    name: "Kiro",
+    npm: "kiro",
+    env: ["KIRO_API_KEY"],
+    models: {
+      // Context limits EMPIRICALLY MEASURED against the Q backend 2026-07-14, NOT the
+      // advertised catalog numbers. AWS capacity-throttles INPUT on the newest models
+      // (opus-4.8/4.7 + the sonnet-5 preview) to ~640K tokens despite their "1M" label;
+      // the mature opus-4.6/sonnet-4.6 genuinely deliver ~1M. Past ~2.65M chars the throttled
+      // ones return ValidationException/CONTENT_LENGTH_EXCEEDS_THRESHOLD, so we declare the
+      // real ceiling here to let context pruning fire before Q hard-rejects.
+      "claude-sonnet-5": kiroModel("claude-sonnet-5", "Claude Sonnet 5", "2026-07-01", 640_000, 64_000),
+      "claude-opus-5": kiroModel("claude-opus-5", "Claude Opus 5", "2026-08-01", 640_000, 128_000),
+      "claude-opus-4.8": kiroModel("claude-opus-4.8", "Claude Opus 4.8", "2026-01-01", 640_000, 128_000),
+      "claude-opus-4.7": kiroModel("claude-opus-4.7", "Claude Opus 4.7", "2025-11-01", 640_000, 128_000),
+      "claude-opus-4.6": kiroModel("claude-opus-4.6", "Claude Opus 4.6", "2025-09-01", 1_000_000, 128_000),
+      "claude-opus-4.5": kiroModel("claude-opus-4.5", "Claude Opus 4.5", "2025-07-01", 200_000, 64_000),
+      "claude-sonnet-4.6": kiroModel("claude-sonnet-4.6", "Claude Sonnet 4.6", "2025-11-01", 1_000_000, 64_000),
+      "claude-sonnet-4.5": kiroModel("claude-sonnet-4.5", "Claude Sonnet 4.5", "2025-07-01", 200_000, 64_000),
+      // GPT-5.6 variants (experimental preview). Verified 2026-07-14: real ~272K window
+      // (advertised 272k is accurate here, NOT throttled) and TEXT-ONLY — the Q `images`
+      // field returns REQUEST_BODY_INVALID for these (Claude accepts it), so no image/pdf.
+      "gpt-5.6-sol": kiroModel("gpt-5.6-sol", "GPT-5.6 Sol", "2026-07-01", 272_000, 64_000, ["text"]),
+      "gpt-5.6-terra": kiroModel("gpt-5.6-terra", "GPT-5.6 Terra", "2026-07-01", 272_000, 64_000, ["text"]),
+      "gpt-5.6-luna": kiroModel("gpt-5.6-luna", "GPT-5.6 Luna", "2026-07-01", 272_000, 64_000, ["text"]),
+    },
+  },
+  orcarouter: {
+    id: "orcarouter",
+    name: "OrcaRouter",
+    api: "https://api.orcarouter.ai/v1",
+    npm: "@ai-sdk/openai-compatible",
+    env: ["ORCAROUTER_API_KEY"],
+    models: {
+      "qwen/qwen3.8-27b-free": orcarouterModel(
+        "qwen/qwen3.8-27b-free",
+        "Qwen: Qwen3.8 27B (Free)",
+        "2026-08-13",
+        262_144,
+        0,
+        ["text", "image", "video"],
+      ),
+      "deepseek/deepseek-v4-flash-free": orcarouterModel(
+        "deepseek/deepseek-v4-flash-free",
+        "DeepSeek: DeepSeek V4 Flash (Free)",
+        "",
+        1_048_576,
+        384_000,
+        ["text"],
+        { field: "reasoning_content" },
+      ),
+      "deepseek/deepseek-v4-pro-free": orcarouterModel(
+        "deepseek/deepseek-v4-pro-free",
+        "DeepSeek: DeepSeek V4 Pro (Free)",
+        "",
+        1_048_576,
+        384_000,
+        ["text"],
+        { field: "reasoning_content" },
+      ),
+    },
+  },
+}
+
 declare const OPENCODE_MODELS_DEV: Record<string, Provider> | undefined
 
 export interface Interface {
@@ -232,7 +352,8 @@ const layer = Layer.effect(
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)
 
-    const get = (): Effect.Effect<Record<string, Provider>> => cachedGet
+    const get = (): Effect.Effect<Record<string, Provider>> =>
+      cachedGet.pipe(Effect.map((all) => ({ ...all, ...BUILTIN_PROVIDERS })))
 
     const refresh = Effect.fn("ModelsDev.refresh")(function* (force = false) {
       if (!force && (yield* fresh())) return

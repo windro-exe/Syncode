@@ -80,6 +80,8 @@ function sdkKey(npm: string): string | undefined {
       return "xai"
     case "venice-ai-sdk-provider":
       return "venice"
+    case "kiro":
+      return "kiro"
     case "@ai-sdk/gateway":
       return "gateway"
     case "@openrouter/ai-sdk-provider":
@@ -980,6 +982,21 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
         ]),
       )
     }
+
+    case "kiro":
+      // Built-in Kiro provider: effort lands under providerOptions.kiro.effort. index.ts
+      // picks the wire shape per model family (Claude → output_config.effort, GPT →
+      // reasoning.effort). Reasoning streams automatically, so the variant only carries effort.
+      // GPT-5.x and the Opus 5 / Sonnet 5 previews support the full tier set (verified
+      // against Q 2026-07-14) but aren't matched by anthropicAdaptiveEfforts, so list them
+      // explicitly.
+      if (id.includes("gpt") || id.includes("opus-5") || id.includes("sonnet-5")) {
+        return Object.fromEntries(["low", "medium", "high", "xhigh", "max"].map((effort) => [effort, { effort }]))
+      }
+      if (adaptiveEfforts) {
+        return Object.fromEntries(adaptiveEfforts.map((effort) => [effort, { effort }]))
+      }
+      return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { effort }]))
 
     case "@ai-sdk/anthropic":
     // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic

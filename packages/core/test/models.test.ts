@@ -126,6 +126,11 @@ const initialState: MockState = {
   calls: [],
 }
 
+const withBuiltins = (data: Record<string, ModelsDev.Provider>) => ({
+  ...data,
+  ...ModelsDev.BUILTIN_PROVIDERS,
+})
+
 describe("ModelsDev Service", () => {
   it.live("get() returns providers from disk when cache file exists", () =>
     Effect.gen(function* () {
@@ -135,7 +140,7 @@ describe("ModelsDev Service", () => {
         state,
         ModelsDev.Service.use((s) => s.get()),
       )
-      expect(result).toEqual(fixture)
+      expect(result).toEqual(withBuiltins(fixture))
       const final = yield* Ref.get(state)
       expect(final.calls).toEqual([])
     }),
@@ -148,7 +153,7 @@ describe("ModelsDev Service", () => {
         state,
         ModelsDev.Service.use((s) => s.get()),
       )
-      expect(result).toEqual({})
+      expect(result).toEqual(withBuiltins({}))
       const final = yield* Ref.get(state)
       expect(final.calls).toEqual([])
     }),
@@ -169,7 +174,7 @@ describe("ModelsDev Service", () => {
             Flag.OPENCODE_DISABLE_MODELS_FETCH = true
           }),
       )
-      expect(result).toEqual(fixture2)
+      expect(result).toEqual(withBuiltins(fixture2))
       expect(yield* Effect.promise(() => readFile(cacheFile, "utf8"))).toBe(JSON.stringify(fixture2))
       const final = yield* Ref.get(state)
       expect(final.calls.length).toBe(1)
@@ -189,7 +194,7 @@ describe("ModelsDev Service", () => {
           })
         }),
       )
-      for (const result of results) expect(result).toEqual(fixture)
+      for (const result of results) expect(result).toEqual(withBuiltins(fixture))
     }),
   )
 
@@ -208,8 +213,8 @@ describe("ModelsDev Service", () => {
           return { a, b }
         }),
       )
-      expect(first.a).toEqual(fixture)
-      expect(first.b).toEqual(fixture)
+      expect(first.a).toEqual(withBuiltins(fixture))
+      expect(first.b).toEqual(withBuiltins(fixture))
     }),
   )
 
@@ -227,8 +232,8 @@ describe("ModelsDev Service", () => {
           return { before, after }
         }),
       )
-      expect(result.before).toEqual(fixture)
-      expect(result.after).toEqual(fixture2)
+      expect(result.before).toEqual(withBuiltins(fixture))
+      expect(result.after).toEqual(withBuiltins(fixture2))
       const final = yield* Ref.get(state)
       expect(final.calls.length).toBe(1)
       expect(final.calls[0].url).toContain("/api.json")
@@ -265,7 +270,7 @@ describe("ModelsDev Service", () => {
       )
       const final = yield* Ref.get(state)
       expect(final.calls.length).toBe(1)
-      expect(after).toEqual(fixture2)
+      expect(after).toEqual(withBuiltins(fixture2))
     }),
   )
 
@@ -281,7 +286,7 @@ describe("ModelsDev Service", () => {
           return yield* svc.get()
         }),
       )
-      expect(result).toEqual(fixture)
+      expect(result).toEqual(withBuiltins(fixture))
       // retryTransient retries 5xx, so calls may be > 1.
       const final = yield* Ref.get(state)
       expect(final.calls.length).toBeGreaterThanOrEqual(1)
