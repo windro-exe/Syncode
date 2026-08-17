@@ -21,6 +21,7 @@ import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
+import { BackgroundJob } from "@/background/job"
 
 export { Parameters } from "./shell/prompt"
 
@@ -80,6 +81,22 @@ type Chunk = {
   text: string
   size: number
 }
+
+// Shared result metadata for both the foreground (run) and background
+// (runBackground) paths so the tool's execute return unifies to one shape.
+type ShellMetadata = {
+  output?: string
+  exit?: number | null
+  description?: string
+  truncated?: boolean
+  outputPath?: string
+  background?: boolean
+  jobId?: string
+}
+
+// Max bytes a background command may append to its output file before we stop
+// appending (the process keeps running). Bounds disk use for long dev servers.
+const BACKGROUND_OUTPUT_CAP = 25 * 1024 * 1024
 
 const resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
@@ -290,7 +307,7 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
   })
 })
 
-function cmd(shell: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
+export function cmd(shell: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && Shell.ps(shell)) {
     return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
       cwd,
@@ -344,6 +361,7 @@ export const ShellTool = Tool.define(
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
     const flags = yield* RuntimeFlags.Service
+    const background = yield* BackgroundJob.Service
     const defaultTimeoutMs = flags.bashDefaultTimeoutMs ?? 2 * 60 * 1000
 
     const cygpath = Effect.fn("ShellTool.cygpath")(function* (shell: string, text: string) {
@@ -589,8 +607,89 @@ export const ShellTool = Tool.define(
           exit: code,
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
-        },
+        } as ShellMetadata,
         output,
+      }
+    })
+
+    // Long-running command: stream output to a file, register a BackgroundJob,
+    // and return immediately. The job lives in the instance scope (survives the
+    // tool call); cancelling it closes the spawn scope and kills the process.
+    const runBackground = Effect.fn("ShellTool.runBackground")(function* (input: {
+      shell: string
+      command: string
+      cwd: string
+      env: NodeJS.ProcessEnv
+    }) {
+      const outputPath = yield* trunc.write("")
+      const job = yield* background.start({
+        type: "shell",
+        title: input.command,
+        metadata: { command: input.command, outputPath },
+        run: Effect.scoped(
+          Effect.gen(function* () {
+            const sink = createWriteStream(outputPath, { flags: "a" })
+            // Swallow stream errors (EPIPE/ENOSPC) so they can't crash the process.
+            sink.on("error", () => {})
+            // Await the flush on teardown so the output file is complete before
+            // the job is marked done (a reader checking on completion sees the tail).
+            yield* Effect.addFinalizer(() =>
+              Effect.promise(
+                () =>
+                  new Promise<void>((resolve) => {
+                    if (sink.destroyed || sink.closed) return resolve()
+                    let settled = false
+                    const done = () => {
+                      if (settled) return
+                      settled = true
+                      resolve()
+                    }
+                    sink.once("close", done)
+                    sink.once("error", done)
+                    sink.once("finish", done)
+                    sink.end(done)
+                  }),
+              ).pipe(Effect.catch(() => Effect.void)),
+            )
+            const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
+            // Cap the output file so a chatty long-running process (dev server,
+            // watcher) can't fill the disk. The process keeps running; we just
+            // stop appending past the cap.
+            let written = 0
+            let capped = false
+            yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
+              Effect.sync(() => {
+                if (capped) return
+                written += Buffer.byteLength(chunk)
+                if (written > BACKGROUND_OUTPUT_CAP) {
+                  sink.write(
+                    `\n[output capped at ${Math.round(BACKGROUND_OUTPUT_CAP / 1024 / 1024)} MB — command still running]\n`,
+                  )
+                  capped = true
+                  return
+                }
+                sink.write(chunk)
+              }),
+            )
+            const code = yield* handle.exitCode
+            return `Command exited with code ${code}`
+          }),
+        ),
+      })
+      return {
+        title: input.command,
+        metadata: {
+          background: true,
+          jobId: job.id,
+          outputPath,
+          truncated: false,
+        } as ShellMetadata,
+        output: [
+          `Started background command (job ${job.id}).`,
+          `Output streams to: ${outputPath}`,
+          "Read that file to see progress. List or stop the job with the tasks tool.",
+          "Do not poll repeatedly; check back when you need the result.",
+        ].join("\n"),
       }
     })
 
@@ -627,6 +726,15 @@ export const ShellTool = Tool.define(
                   yield* ask(ctx, scan, params)
                 }),
               )
+
+              if (params.background === true) {
+                return yield* runBackground({
+                  shell,
+                  command: params.command,
+                  cwd,
+                  env: yield* shellEnv(ctx, cwd),
+                })
+              }
 
               return yield* run(
                 {

@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { parseResponse } from "../../src/tool/mcp-websearch"
-import { selectWebSearchProvider, webSearchModelName, webSearchProviderLabel } from "../../src/tool/websearch"
-
+import { extractUrls, selectWebSearchProvider, webSearchModelName, webSearchProviderLabel } from "../../src/tool/websearch"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { webSearchEnabled } from "../../src/tool/registry"
 import { it } from "../lib/effect"
-import { ProviderV2 } from "@opencode-ai/core/provider"
 
 const SESSION_ID = "ses_0196aabbccddeeff001122334455"
 
@@ -37,9 +36,8 @@ describe("websearch provider", () => {
     expect(selectWebSearchProvider(SESSION_ID, { exa: false, parallel: true })).toBe("parallel")
   })
 
-  test("is enabled for OpenCode providers or explicit websearch provider flags", () => {
+  test("is only enabled for opencode or explicit websearch provider flags", () => {
     expect(webSearchEnabled(ProviderV2.ID.opencode, { exa: false, parallel: false })).toBe(true)
-    expect(webSearchEnabled(ProviderV2.ID.make("opencode-go"), { exa: false, parallel: false })).toBe(true)
     expect(webSearchEnabled(ProviderV2.ID.openai, { exa: false, parallel: false })).toBe(false)
     expect(webSearchEnabled(ProviderV2.ID.openai, { exa: true, parallel: false })).toBe(true)
     expect(webSearchEnabled(ProviderV2.ID.openai, { exa: false, parallel: true })).toBe(true)
@@ -97,4 +95,35 @@ describe("websearch MCP response parser", () => {
       expect(result).toBe("search results")
     }),
   )
+})
+
+describe("extractUrls", () => {
+  test("extracts http(s) urls preserving order, deduped", () => {
+    const text = `
+      First source: https://example.com/article-1
+      Second: https://other.org/path?q=1#frag
+      And again https://example.com/article-1 (dup)
+      Trailing punct: https://foo.com/page.
+    `
+    expect(extractUrls(text)).toEqual([
+      "https://example.com/article-1",
+      "https://other.org/path?q=1#frag",
+      "https://foo.com/page",
+    ])
+  })
+
+  test("filters out asset and tracking URLs", () => {
+    const text = `
+      content: https://docs.example.com/guide
+      icon: https://cdn.example.com/favicon.ico
+      analytics: https://www.google-analytics.com/collect
+      js: https://example.com/app.js?v=2
+      schema: https://schema.org/Article
+    `
+    expect(extractUrls(text)).toEqual(["https://docs.example.com/guide"])
+  })
+
+  test("returns empty array on plain text", () => {
+    expect(extractUrls("no urls here, only words")).toEqual([])
+  })
 })

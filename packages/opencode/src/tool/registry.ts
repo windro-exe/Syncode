@@ -15,7 +15,13 @@ import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
-import { SkillTool } from "./skill"
+import { SkillSectionTool } from "./skill_section"
+import { MemoryTool } from "./memory"
+import { SessionRecallTool } from "./session_recall"
+import { TasksTool } from "./tasks"
+import { MonitorTool } from "./monitor"
+import { ContextTool } from "./context"
+import { GoalTool } from "./goal"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -46,6 +52,9 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Agent } from "../agent/agent"
 import { Skill } from "../skill"
+import { SkillActive } from "../skill/active"
+import { Memory } from "@/memory/memory"
+import { Goal } from "@/session/goal"
 import { Permission } from "@/permission"
 import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -113,7 +122,13 @@ const layer = Layer.effect(
     const edit = yield* EditTool
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
-    const skilltool = yield* SkillTool
+    const skilltool = yield* SkillSectionTool
+    const memorytool = yield* MemoryTool
+    const recalltool = yield* SessionRecallTool
+    const taskstool = yield* TasksTool
+    const monitortool = yield* MonitorTool
+    const contexttool = yield* ContextTool
+    const goaltool = yield* GoalTool
     const agent = yield* Agent.Service
     const codeMode = flags.experimentalCodeMode ? yield* Effect.promise(() => import("./code-mode")) : undefined
     const codeModeTool = codeMode ? yield* codeMode.CodeModeTool : undefined
@@ -218,7 +233,13 @@ const layer = Layer.effect(
           fetch: Tool.init(webfetch),
           todo: Tool.init(todo),
           search: Tool.init(websearch),
-          skill: Tool.init(skilltool),
+          skill_section: Tool.init(skilltool),
+          memory: Tool.init(memorytool),
+          session_recall: Tool.init(recalltool),
+          tasks: Tool.init(taskstool),
+          monitor: Tool.init(monitortool),
+          context: Tool.init(contexttool),
+          goal: Tool.init(goaltool),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -241,7 +262,13 @@ const layer = Layer.effect(
             tool.fetch,
             tool.todo,
             tool.search,
-            tool.skill,
+            tool.skill_section,
+            tool.memory,
+            tool.session_recall,
+            tool.tasks,
+            tool.monitor,
+            tool.context,
+            tool.goal,
             tool.patch,
             ...(tool.execute ? [tool.execute] : []),
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
@@ -434,6 +461,9 @@ export const node = LayerNode.make({
     Todo.node,
     Agent.node,
     Skill.node,
+    SkillActive.node,
+    Memory.node,
+    Goal.node,
     Session.node,
     BackgroundJob.node,
     Provider.node,

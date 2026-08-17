@@ -335,6 +335,7 @@ export const User = Schema.Struct({
   time: Schema.Struct({
     created: Timestamp,
   }),
+  pruned: Schema.optional(NonNegativeInt),
   format: Schema.optional(Format),
   summary: Schema.optional(
     Schema.Struct({
@@ -457,6 +458,7 @@ export const Assistant = Schema.Struct({
     created: NonNegativeInt,
     completed: Schema.optional(NonNegativeInt),
   }),
+  pruned: Schema.optional(NonNegativeInt),
   error: Schema.optional(AssistantErrorSchema),
   parentID: MessageID,
   modelID: Model.ID,
@@ -482,6 +484,7 @@ export const Assistant = Schema.Struct({
   structured: Schema.optional(Schema.Any),
   variant: Schema.optional(Schema.String),
   finish: Schema.optional(Schema.String),
+  skill: Schema.optional(Schema.String),
 }).annotate({ identifier: "AssistantMessage" })
 export type Assistant = Omit<Types.DeepMutable<Schema.Schema.Type<typeof Assistant>>, "error"> & {
   error?: AssistantError

@@ -4,9 +4,11 @@ import { Effect, Layer } from "effect"
 import type { Agent } from "../../src/agent/agent"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Skill } from "../../src/skill"
+import { SkillActive } from "../../src/skill/active"
 import { Permission } from "../../src/permission"
 import type { Provider } from "../../src/provider/provider"
 import { SystemPrompt } from "../../src/session/system"
+import { SessionID } from "../../src/session/schema"
 import { MCP } from "../../src/mcp"
 import { testEffect } from "../lib/effect"
 
@@ -16,23 +18,16 @@ const skills: Skill.Info[] = [
     description: "Zeta skill.",
     location: "/tmp/zeta-skill/SKILL.md",
     content: "# zeta-skill",
+    rules: ["do not run zeta in prod"],
+    sections: [{ id: "usage", title: "Usage", content: "zeta usage details" }],
   },
   {
     name: "alpha-skill",
     description: "Alpha skill.",
     location: "/tmp/alpha-skill/SKILL.md",
     content: "# alpha-skill",
-  },
-  {
-    name: "middle-skill",
-    description: "Middle skill.",
-    location: "/tmp/middle-skill/SKILL.md",
-    content: "# middle-skill",
-  },
-  {
-    name: "manual-skill",
-    location: "/tmp/manual-skill/SKILL.md",
-    content: "# manual-skill",
+    rules: ["alpha rule 1"],
+    sections: [{ id: "intro", title: "Intro", content: "alpha intro details" }],
   },
 ]
 
@@ -44,7 +39,7 @@ const build: Agent.Info = {
 }
 
 const it = testEffect(
-  LayerNode.compile(SystemPrompt.node, [
+  LayerNode.compile(LayerNode.group([SystemPrompt.node, SkillActive.node]), [
     [
       MCP.node,
       Layer.mock(MCP.Service, {
@@ -84,48 +79,27 @@ const it = testEffect(
 )
 
 describe("session.system", () => {
-  test("selects the Meta prompt for Muse Spark model IDs", () => {
-    for (const id of ["meta/muse-spark-preview", "muse-spark-1.1", "muse-spark-1.2"]) {
-      const prompt = SystemPrompt.provider({ api: { id } } as Provider.Model)[0]
-      expect(prompt).toContain("powered by Muse Spark,")
-      expect(prompt).toContain("using Meta Muse Spark.")
-      expect(prompt).not.toContain("{{MODEL_NAME}}")
-    }
+  test("selects the Syncode system prompt", () => {
+    const prompt = SystemPrompt.provider({ providerID: "anthropic", api: { id: "claude-3-7-sonnet" } } as Provider.Model)[0]
+    expect(prompt).toContain("You are Syncode, a fully capable AI assistant")
   })
 
-  test("selects the Meta prompt for Muse Glimmer model IDs", () => {
-    for (const id of ["meta/muse-glimmer", "meta/muse-glimmer-30b", "muse-glimmer-30b"]) {
-      const prompt = SystemPrompt.provider({ api: { id } } as Provider.Model)[0]
-      expect(prompt).toContain("powered by Muse Glimmer,")
-      expect(prompt).toContain("using Meta Muse Glimmer.")
-      expect(prompt).not.toContain("{{MODEL_NAME}}")
-    }
-  })
-
-  test("selects the Kimi prompt for official provider model IDs", () => {
-    for (const providerID of ["kimi-for-coding", "moonshotai", "moonshotai-cn"]) {
-      const prompt = SystemPrompt.provider({ providerID, api: { id: "k3" } } as Provider.Model)[0]
-      expect(prompt).toContain("# Prompt and Tool Use")
-    }
-  })
-
-  it.effect("skills output is sorted by name and stable across calls", () =>
+  it.effect("renders active skills TOC and rules", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
-      const first = yield* prompt.skills(build)
-      const second = yield* prompt.skills(build)
-      const output = first ?? (yield* Effect.fail(new NamedError.Unknown({ message: "missing skills output" })))
+      const skillActive = yield* SkillActive.Service
+      const sid = SessionID.descending()
 
-      expect(first).toBe(second)
+      yield* skillActive.set(sid, ["alpha-skill", "zeta-skill"])
+      const output = (yield* prompt.skills(build, sid)) ?? ""
 
-      const alpha = output.indexOf("<name>alpha-skill</name>")
-      const middle = output.indexOf("<name>middle-skill</name>")
-      const zeta = output.indexOf("<name>zeta-skill</name>")
-
-      expect(alpha).toBeGreaterThan(-1)
-      expect(middle).toBeGreaterThan(alpha)
-      expect(zeta).toBeGreaterThan(middle)
-      expect(output).not.toContain("manual-skill")
+      expect(output).toContain('<active_skill name="alpha-skill">')
+      expect(output).toContain("alpha rule 1")
+      expect(output).toContain("<table_of_contents>")
+      expect(output).toContain("- intro: Intro")
+      expect(output).toContain('<active_skill name="zeta-skill">')
+      expect(output).toContain("do not run zeta in prod")
+      expect(output).toContain("- usage: Usage")
     }),
   )
 

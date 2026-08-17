@@ -1,0 +1,16 @@
+Run a command in the background and get notified when its output matches a pattern, so you can react to logs, build/test results, or status changes without blocking.
+
+Unlike a background shell (which you have to poll by reading its output file), a monitor pushes matching output lines back to you as a new turn the moment they appear. Use it to watch a long-running process and act on specific events.
+
+Good for:
+- Watching a test watcher or build and reacting when it reports a failure or success.
+- Tailing a server log and reacting when a specific error or "ready" line appears.
+- Polling a status command in a loop and reacting when the state changes.
+
+Parameters:
+- `command`: the command to run (e.g. a watcher, `tail -f`, a dev server, a polling loop).
+- `description`: short label (3-5 words).
+- `pattern` (optional but strongly recommended): a JavaScript regular expression. Only output lines matching it are pushed back to you. Without it, every non-empty line is pushed, which is noisy — always set a specific pattern unless you truly want every line.
+- `max_notifications` (optional, default 10): stop the monitor after pushing this many matching lines, to bound interruptions.
+
+The command runs in the background and does not block. You get a job id; list or stop it with the tasks tool. Full output is also written to a file you can read. When a matching line appears you receive a synthetic message with that line — decide whether to act or ignore it.

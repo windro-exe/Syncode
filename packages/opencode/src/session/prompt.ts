@@ -13,7 +13,14 @@ import { Provider } from "@/provider/provider"
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import { SessionCompaction } from "./compaction"
+import { usable as usableContext, isSoftCheckpoint } from "./overflow"
+import { Token } from "@/util/token"
 import { SystemPrompt } from "./system"
+import { SkillRouter } from "@/skill/router"
+import { SkillActive } from "@/skill/active"
+import { Goal } from "@/session/goal"
+import { Ephemeral } from "@/session/ephemeral"
+import { AutoMemory } from "@/session/auto-memory"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import { MAX_STEPS_PROMPT } from "@opencode-ai/core/session/runner/max-steps"
@@ -81,6 +88,38 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
+// Approximate per-attachment token cost for the overflow trigger. We can't
+// know exact vision-token-pricing without reading the bytes, but Anthropic and
+// Bedrock both charge roughly 1500-2000 tokens per image at standard res, and
+// PDFs map to a similar floor. Used only for the projected-size estimate, not
+// for billing — conservative so we err on cut-sooner.
+const APPROX_TOKENS_PER_ATTACHMENT = 1_500
+function approxAttachmentTokens(parts: ReadonlyArray<SessionV1.Part>): number {
+  let n = 0
+  for (const p of parts) {
+    if (p.type === "file" && typeof p.mime === "string") {
+      const mt = p.mime.toLowerCase()
+      // text/plain and application/x-directory are filtered out by
+      // toModelMessages before they ship — don't count phantom tokens.
+      if (mt === "text/plain" || mt === "application/x-directory") continue
+      if (mt.startsWith("image/") || mt.startsWith("application/") || mt.startsWith("text/")) {
+        n += APPROX_TOKENS_PER_ATTACHMENT
+      }
+    }
+  }
+  return n
+}
+
+// Headroom for everything the prune trigger doesn't directly count:
+// - the rebuilt system block (memory index + agent.md + _plan.md inlined +
+//   active skill TOC/rules + env + persona; 5-15K typical with growth)
+// - post-trigger injections (auto-recall ≤2K, soft-checkpoint reminder ~150,
+//   per-step reminder wraps ~50)
+// Conservative on purpose. Combined with the F2 fix (reserved buffer = max of
+// COMPACTION_BUFFER and maxOutput), this closes the cumulative blind spot the
+// prune-audit measured at 30-50K worst case.
+const SYSTEM_BLOCK_RESERVE = 6_000
+
 function mcpResourceBase64Size(value: string) {
   const trimmed = value.replace(/\s/g, "")
   const padding = trimmed.endsWith("==") ? 2 : trimmed.endsWith("=") ? 1 : 0
@@ -99,12 +138,26 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
   return part.state.status === "error" && part.state.metadata?.interrupted === true
 }
 
+// System prompt for `/btw` side questions — a one-shot, tool-less aside that
+// can see the conversation but never acts on it or persists.
+const BTW_SYSTEM =
+  "You are answering a quick SIDE QUESTION the user asked alongside an ongoing task. " +
+  "You can see the conversation so far for context. Answer directly and concisely in a SINGLE response. " +
+  "You have NO tools and cannot take any actions — do not offer to run, edit, search, or check anything; " +
+  "answer from what you already know. This is a standalone aside; do not try to resume or comment on the main task."
+
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<SessionV1.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<SessionV1.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
+  readonly btw: (input: {
+    sessionID: SessionID
+    question: string
+    providerID: ProviderV2.ID
+    modelID: ModelV2.ID
+  }) => Effect.Effect<{ text: string }>
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
 }
 
@@ -137,6 +190,11 @@ const layer = Layer.effect(
     const summary = yield* SessionSummary.Service
     const sys = yield* SystemPrompt.Service
     const llm = yield* LLM.Service
+    const router = yield* SkillRouter.Service
+    const skillActive = yield* SkillActive.Service
+    const goal = yield* Goal.Service
+    const autoMemory = yield* AutoMemory.Service
+    const softCheckpointed = new Set<SessionID>()
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
@@ -1083,6 +1141,7 @@ const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
+        let overflowEvictions = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1125,6 +1184,90 @@ const layer = Layer.effect(
                 callID: orphan.callID,
               })
             }
+
+            // /btw: if the turn just answered was an ephemeral aside, prune the
+            // question and its answer so they drop from future context. Runs
+            // BEFORE the /goal block: a goal continuation would move lastUser off
+            // the aside, so the aside must be pruned on the turn that answered it.
+            // Pruned messages stay on disk, recoverable via session_recall.
+            const askedMsg = msgs.find((m) => m.info.id === lastUser.id)
+            const askedText = askedMsg?.parts.find(
+              (p): p is SessionV1.TextPart => p.type === "text" && !!p.text.trim(),
+            )?.text
+            if (askedText && Ephemeral.isEphemeralAside(askedText)) {
+              for (const m of msgs) {
+                if (m.info.id < lastUser.id) continue
+                if (m.info.pruned) continue
+                if (m.info.role !== "user" && m.info.role !== "assistant") continue
+                yield* sessions.updateMessage({ ...m.info, pruned: Date.now() })
+              }
+              yield* Effect.logInfo("btw.pruned", { messageID: lastUser.id })
+            }
+
+            // /goal: before handing control back, if an active completion goal
+            // is not yet met, ask the small checker model and keep working
+            // instead of stopping. Bounded by max iterations; fail-safe stops.
+            const activeGoal = yield* goal.get(sessionID)
+            if (activeGoal && lastAssistantMsg) {
+              if (activeGoal.iterations >= activeGoal.max) {
+                yield* goal.clear(sessionID)
+                yield* Effect.logInfo("goal.maxIterations", { condition: activeGoal.condition })
+              } else {
+                const recent = lastAssistantMsg.parts
+                  .filter((p): p is SessionV1.TextPart => p.type === "text" && !!p.text.trim())
+                  .map((p) => p.text)
+                  .join("\n")
+                const agentInfo = yield* agents.get(lastUser.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+                const checkerModel = yield* getModel(
+                  lastUser.model.providerID,
+                  lastUser.model.modelID,
+                  sessionID,
+                ).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+                const met =
+                  agentInfo && checkerModel
+                    ? yield* goal.check({
+                        condition: activeGoal.condition,
+                        recent,
+                        agent: agentInfo,
+                        user: lastUser,
+                        fallbackModel: checkerModel,
+                        sessionID,
+                      })
+                    : true
+                if (!met) {
+                  yield* goal.increment(sessionID)
+                  const continuationID = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: continuationID,
+                    role: "user",
+                    sessionID,
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                    time: { created: Date.now() },
+                  })
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: continuationID,
+                    sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: [
+                      "<goal-continuation>",
+                      "The completion goal for this session is not yet met:",
+                      activeGoal.condition,
+                      "",
+                      `Continue working toward it. When it is fully and verifiably met, stop. (Autonomous iteration ${activeGoal.iterations}/${activeGoal.max}.)`,
+                      "</goal-continuation>",
+                    ].join("\n"),
+                  })
+                  yield* Effect.logInfo("goal.continue", { iterations: activeGoal.iterations })
+                  continue
+                }
+                yield* goal.clear(sessionID)
+                yield* Effect.logInfo("goal.met", { condition: activeGoal.condition })
+              }
+            }
+
             yield* Effect.logInfo("exiting loop", { "session.id": sessionID })
             break
           }
@@ -1147,24 +1290,53 @@ const layer = Layer.effect(
           }
 
           if (task?.type === "compaction") {
-            const result = yield* compaction.process({
-              messages: msgs,
-              parentID: lastUser.id,
-              sessionID,
-              auto: task.auto,
-              overflow: task.overflow,
-            })
-            if (result === "stop") break
-            continue
+            // Compaction is deprecated; honor any in-flight legacy task by stopping the loop.
+            yield* Effect.logInfo("compaction.skipped", { reason: "memory_replaces_compaction" })
+            break
           }
 
-          if (
-            lastFinished &&
-            lastFinished.summary !== true &&
-            (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
-          ) {
-            yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
-            continue
+          let softCheckpoint = false
+          if (lastFinished && lastFinished.summary !== true) {
+            const cfg = yield* config.get()
+            const usable = usableContext({ cfg, model, outputTokenMax: flags.outputTokenMax })
+            const lt = lastFinished.tokens
+            const lastTokens = lt.total ?? lt.input + lt.output + (lt.reasoning ?? 0) + lt.cache.read + lt.cache.write
+            const newUserMsg = msgs.findLast((m) => m.info.role === "user" && m.info.id > lastFinished.id)
+            const newUserApprox = newUserMsg
+              ? (yield* Token.count(newUserMsg.parts.map((p) => (p.type === "text" ? p.text : "")).join("\n"))) +
+                approxAttachmentTokens(newUserMsg.parts)
+              : 0
+            const projected = lastTokens + newUserApprox + SYSTEM_BLOCK_RESERVE
+            softCheckpoint = isSoftCheckpoint({ cfg, projected, model, outputTokenMax: flags.outputTokenMax })
+            if (usable > 0 && projected >= usable * SessionCompaction.PRUNE_TURN_TRIGGER_FRACTION) {
+              const keepBudget = Math.max(
+                Math.floor(usable * 0.3),
+                Math.floor(usable * SessionCompaction.PRUNE_TURN_KEEP_FRACTION) - newUserApprox,
+              )
+              yield* Effect.logInfo("overflow.prune", {
+                sessionID,
+                lastTokens,
+                newUserApprox,
+                projected,
+                usable,
+                keepBudget,
+              })
+              yield* compaction
+                .prune({
+                  sessionID,
+                  model,
+                  keepTokens: keepBudget,
+                })
+                .pipe(Effect.ignore)
+              msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+                Effect.provideService(Database.Service, database),
+              )
+              const autoAgent = yield* agents.get(lastUser.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+              if (autoAgent)
+                yield* autoMemory
+                  .extract({ sessionID, messages: msgs, agent: autoAgent, user: lastUser, fallbackModel: model })
+                  .pipe(Effect.ignore, Effect.forkIn(scope))
+            }
           }
 
           const agent = yield* agents.get(lastUser.agent)
@@ -1182,6 +1354,33 @@ const layer = Layer.effect(
             Effect.provideService(FSUtil.Service, fsys),
             Effect.provideService(Session.Service, sessions),
           )
+
+          // Auto-recall (push): surface memory relevant to THIS turn into the
+          // latest user message — cache-safe, never the cached system prefix —
+          // so the model doesn't have to remember to search.
+          if (step === 1 && process.env["OPENCODE_MEMORY_RECALL"] !== "0") {
+            const recallUser = msgs.findLast((m) => m.info.role === "user")
+            const queryText = recallUser?.parts
+              .flatMap((p) => (p.type === "text" ? [p.text] : []))
+              .join(" ")
+              .slice(0, 2000)
+            if (recallUser && queryText && queryText.trim()) {
+              const block = yield* sys.recall({
+                query: queryText,
+                sessionID,
+                skipPaths: ["/memories/agent.md", "/memories/_plan.md"],
+              })
+              if (block)
+                recallUser.parts.push({
+                  id: PartID.ascending(),
+                  messageID: recallUser.info.id,
+                  sessionID: recallUser.info.sessionID,
+                  type: "text",
+                  text: block,
+                  synthetic: true,
+                })
+            }
+          }
 
           const msg: SessionV1.Assistant = {
             id: MessageID.ascending(),
@@ -1252,18 +1451,66 @@ const layer = Layer.effect(
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
 
+            // Auto-skill router: runs once per user turn (step 1), then the
+            // active skills stay in effect for every sub-step until the turn ends.
+            if (step === 1) {
+              const userText = (() => {
+                const texts = (lastUserMsg?.parts ?? [])
+                  .filter((p): p is SessionV1.TextPart => p.type === "text" && !p.synthetic)
+                  .map((p) => p.text)
+                  .filter((t) => t && t.trim().length > 0)
+                return texts.join("\n").trim().slice(0, 4000)
+              })()
+              const picked = yield* router
+                .route({
+                  agent,
+                  user: lastUser,
+                  userText,
+                  fallbackModel: model,
+                  sessionID,
+                })
+                .pipe(Effect.catchCause(() => Effect.succeed([] as string[])))
+              yield* skillActive.set(sessionID, picked)
+              if (picked.length > 0) {
+                handle.message.skill = picked.join(",")
+                yield* sessions.updateMessage(handle.message)
+              }
+            }
+
+            // Soft checkpoint: once per user turn, when context is already ~60%
+            // full, remind the model to persist durable state to memory before
+            // the 80% eviction drops older turns.
+            if (softCheckpoint && !softCheckpointed.has(sessionID)) {
+              softCheckpointed.add(sessionID)
+              const target = lastUserMsg?.parts.findLast(
+                (p) => p.type === "text" && !p.ignored && !p.synthetic && p.text.trim().length > 0,
+              )
+              if (target?.type === "text") {
+                target.text = [
+                  target.text,
+                  "",
+                  "<system-reminder>",
+                  "The context window is about 60% full. Older turns will soon be evicted to make room, and evicted content is only recoverable via the session_recall tool.",
+                  "Before continuing, save any durable facts you will need later — decisions, file paths, error strings, open questions, task state — to memory (the memory tool, session scope). This is the moment to do it; do not wait until context overflows.",
+                  "</system-reminder>",
+                ].join("\n")
+              }
+            }
+
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const [skills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
-              sys.skills(agent),
+            const [skills, env, instructions, mcpInstructions, modelMsgs, memory] = yield* Effect.all([
+              sys.skills(agent, sessionID),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               sys.mcp(agent, session.permission),
-              MessageV2.toModelMessagesEffect(msgs, model),
+              MessageV2.toModelMessagesEffect(msgs, model, { keepMediaForLatestUser: true }),
+              sys.memory(sessionID).pipe(Effect.orElseSucceed(() => undefined)),
             ])
             const system = [
               ...env,
               ...instructions,
+              ...(memory ? [memory] : []),
               ...(mcpInstructions ? [mcpInstructions] : []),
               ...(skills ? [skills] : []),
             ]
@@ -1318,13 +1565,26 @@ const layer = Layer.effect(
 
             if (result === "stop") return "break" as const
             if (result === "compact") {
-              yield* compaction.create({
-                sessionID,
-                agent: lastUser.agent,
-                model: lastUser.model,
-                auto: true,
-                overflow: !handle.message.finish,
-              })
+              const overflowed = !handle.message.finish
+              yield* Effect.logInfo("overflow.continue", { sessionID, overflow: overflowed })
+              if (overflowed) {
+                const cfg = yield* config.get()
+                const budget = usableContext({ cfg, model, outputTokenMax: flags.outputTokenMax })
+                const fraction = overflowEvictions === 0 ? SessionCompaction.PRUNE_TURN_KEEP_FRACTION : 0.3
+                if (overflowEvictions >= 2 || budget <= 0) {
+                  yield* Effect.logError("overflow.unrecoverable", { sessionID, budget, evictions: overflowEvictions })
+                  handle.message.error = new SessionV1.ContextOverflowError({
+                    message:
+                      "Request exceeds the provider's size limit and evicting older turns did not bring it under. Start a new session, or remove large attachments from the most recent turns.",
+                  }).toObject()
+                  yield* sessions.updateMessage(handle.message)
+                  return "break" as const
+                }
+                overflowEvictions++
+                const keepTokens = Math.floor(budget * fraction)
+                yield* Effect.logInfo("overflow.evict", { sessionID, keepTokens, budget, attempt: overflowEvictions })
+                yield* compaction.prune({ sessionID, model, keepTokens }).pipe(Effect.ignore)
+              }
             }
             return "continue" as const
           }).pipe(
@@ -1480,12 +1740,68 @@ const layer = Layer.effect(
       return result
     })
 
+    const btw = Effect.fn("SessionPrompt.btw")(function* (input: {
+      sessionID: SessionID
+      question: string
+      providerID: ProviderV2.ID
+      modelID: ModelV2.ID
+    }) {
+      // One-shot, TOOL-LESS side answer: sees the conversation for context but
+      // runs entirely outside the main turn and persists nothing.
+      const model = yield* provider.getModel(input.providerID, input.modelID).pipe(Effect.orDie)
+      const messages = yield* sessions.messages({ sessionID: input.sessionID }).pipe(Effect.orDie)
+      const userInfo = messages.findLast((m) => m.info.role === "user")?.info
+      if (!userInfo || userInfo.role !== "user") {
+        yield* Effect.logInfo("btw.no-user", { "session.id": input.sessionID })
+        return { text: "" }
+      }
+      yield* Effect.logInfo("btw.start", {
+        "session.id": input.sessionID,
+        modelID: input.modelID,
+        qlen: input.question.length,
+        msgs: messages.length,
+      })
+      const transcript = messages
+        .map((m) => {
+          const text = m.parts
+            .flatMap((p) => (p.type === "text" ? [p.text] : []))
+            .join("\n")
+            .trim()
+          return text ? `${m.info.role === "user" ? "User" : "Assistant"}: ${text}` : ""
+        })
+        .filter(Boolean)
+        .join("\n\n")
+      const content = transcript
+        ? `Conversation so far (context only):\n\n${transcript}\n\n---\nQuick side question: ${input.question}`
+        : input.question
+      const text = yield* llm
+        .stream({
+          agent: yield* agents.get(userInfo.agent ?? (yield* agents.defaultInfo()).name),
+          user: userInfo,
+          system: [BTW_SYSTEM],
+          tools: {},
+          model,
+          sessionID: input.sessionID,
+          retries: 2,
+          messages: [{ role: "user" as const, content }],
+        })
+        .pipe(
+          Stream.filter(LLMEvent.is.textDelta),
+          Stream.map((e) => e.text),
+          Stream.mkString,
+          Effect.orDie,
+        )
+      yield* Effect.logInfo("btw.done", { chars: text.length })
+      return { text: text.trim() }
+    })
+
     return Service.of({
       cancel,
       prompt,
       loop,
       shell,
       command,
+      btw,
       resolvePromptParts,
     })
   }),
@@ -1622,6 +1938,10 @@ export const node = LayerNode.make({
     SessionSummary.node,
     SystemPrompt.node,
     LLM.node,
+    SkillRouter.node,
+    SkillActive.node,
+    Goal.node,
+    AutoMemory.node,
     EventV2Bridge.node,
     RuntimeFlags.node,
     Database.node,

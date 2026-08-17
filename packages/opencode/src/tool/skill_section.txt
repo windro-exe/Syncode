@@ -1,0 +1,11 @@
+Read one or more sections from a skill that opencode picked for this turn.
+
+The active skills' tables of contents are shown in your system prompt under <table_of_contents>, each inside an <active_skill name="..."> block. Each entry has an `id` — pass those ids in `sections` to fetch the bodies.
+
+When more than one skill is active, set `skill` to the name from the `<active_skill name="...">` tag whose section you want. When only one skill is active, `skill` may be omitted.
+
+Use this tool when you need detail beyond the rules and TOC already in your system prompt. Fetching only the sections you need keeps context lean.
+
+You can request multiple sections in one call. Unknown ids are reported back so you can correct the call.
+
+If no skill is active for this turn, this tool returns an error — fall back to general reasoning.

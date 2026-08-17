@@ -1,14 +1,37 @@
-- Search the web using the session's web search provider - performs real-time web searches and can scrape content from specific URLs
+- Search the web using the session's web search provider (Exa or Parallel) — performs real-time web searches
 - Provides up-to-date information for current events and recent data
-- Supports configurable result counts and returns the content from the most relevant websites
+- Returns the content from the most relevant websites with snippets
 - Use this tool for accessing information beyond knowledge cutoff
-- Searches are performed automatically within a single API call
 
-Usage notes:
-  - Supports live crawling modes when available: 'fallback' (backup if cached unavailable) or 'preferred' (prioritize live crawling)
-  - Search types when available: 'auto' (balanced), 'fast' (quick results), 'deep' (comprehensive search)
-  - Configurable context length for optimal LLM integration
-  - Domain filtering and advanced search options available
+Operating modes:
+  - DEFAULT (snippets only): fast, single API call, returns search snippets and URLs. Good for quick lookups, fact-finding, or as the first hop before targeted webfetch calls.
+  - DEEP (deep=true): after the snippet search, parallel-fetches the top results' full pages and inlines the sections most relevant to the query. Use this for research-shaped questions where snippets aren't enough — comparison studies, mechanism explanations, "how does X actually work" questions, anything where you'd otherwise call webfetch 5 times in a row. One deep search replaces a manual fan-out.
+
+When to pick deep mode:
+  - The user asked a research question, not a fact lookup
+  - You'd otherwise need to read 3+ source pages to answer well
+  - The query is technical/specific enough that snippets won't carry the answer
+  - Skip when: the user just wants a URL, a date, a definition, or one current fact — snippets are cheaper and often sufficient
+
+Tuning deep mode:
+  - maxFetch: how many of the top results to pull in full (default 5, hard max 10). Higher = broader coverage, more bandwidth, more context spend.
+  - fetchCharsPerResult: per-page extract budget (default 3000, hard max 8000). The query is used as the objective for relevance scoring, so you get the matching sections, not whole pages.
+  - Strategy: start with default deep parameters; only crank maxFetch/fetchCharsPerResult if the first pass left gaps.
+
+Other parameters:
+  - numResults: search result count (default 8). Independent of deep mode — it controls how many candidate URLs surface.
+  - livecrawl: 'fallback' (default, use cache when fresh) or 'preferred' (force live crawl, slower but freshest)
+  - type: 'auto' (default), 'fast', or 'deep' — Exa-side search depth, separate from this tool's deep parameter
+  - contextMaxCharacters: cap on Exa's pre-deep snippet response
+
+Issuing multiple parallel searches when you have several independent angles is encouraged — that's how you go wide. Use deep=true when you also need to go deep.
+
+Community-knowledge research (Reddit):
+  - For questions where community experience, anecdotes, configurations, or "what actually works" matter more than official docs, prefer the Reddit MCP tools (browse_subreddit, search_reddit, get_post_details) over generic web search.
+  - Good signals to reach for Reddit: "real-world tradeoffs", "people's experience with X", "is X actually good", "best settings for Y", troubleshooting threads, hardware recommendations, niche tooling debates, dotfile/config sharing, scam/quality warnings, learning resources curated by practitioners.
+  - Workflow: search_reddit broadly first to find candidate threads, then get_post_details on the top 2-3 to pull the full comment trees. Comments often have the substance — the post is just the question.
+  - Pair with websearch deep=true when you need both official sources AND community sentiment. Run them in parallel.
+  - Skip Reddit when: the question is purely factual (dates, definitions, API specs), code-reference (use context7 or docs), or about your local repo.
 
 The current year is {{year}}. You MUST use this year when searching for recent information or current events
 - Example: If the current year is 2026 and the user asks for "latest AI news", search for "AI news 2026", NOT "AI news 2025"

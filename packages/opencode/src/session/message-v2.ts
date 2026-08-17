@@ -131,10 +131,19 @@ function providerMeta(metadata: Record<string, any> | undefined) {
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
-  options?: { stripMedia?: boolean; toolOutputMaxChars?: number },
+  options?: { stripMedia?: boolean; keepMediaForLatestUser?: boolean; toolOutputMaxChars?: number },
 ) {
   const result: UIMessage[] = []
   const toolNames = new Set<string>()
+  // The id of the most recent user message — used by `keepMediaForLatestUser`
+  // to strip image/file media from older kept-tail user turns while preserving
+  // it on the just-arrived turn the model needs to actually look at. Stops a
+  // 4MB screenshot from re-shipping every turn until eviction (which compounds
+  // cache-prefix breakage).
+  const latestUserId = (() => {
+    for (let i = input.length - 1; i >= 0; i--) if (input[i]!.info.role === "user") return input[i]!.info.id
+    return undefined
+  })()
   // Track media from tool results that need to be injected as user messages
   // for providers that don't support that media type in tool results.
   //
@@ -192,7 +201,35 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     return { type: "json", value: output as never }
   }
 
+  let lastPrunedRole: "user" | "assistant" | undefined
   for (const msg of input) {
+    if (msg.info.pruned) {
+      // Sliding-window eviction: parts persist on disk but we send a
+      // placeholder so the prompt fits. Two precautions:
+      //  1) emit BEFORE the empty-parts skip below — a pruned message with
+      //     zero parts must still produce a placeholder, otherwise we'd
+      //     silently drop a slot and break user/assistant alternation
+      //     downstream.
+      //  2) dedupe consecutive same-role pruned messages — opencode runs
+      //     each tool step as its own assistant Info, so a pruned turn
+      //     commonly looks like [user, assistant, assistant, assistant].
+      //     The AI SDK's `convertToModelMessages` does NOT merge same-role
+      //     UIMessages, and Anthropic rejects same-role runs with 400.
+      if (lastPrunedRole === msg.info.role) continue
+      lastPrunedRole = msg.info.role
+      result.push({
+        id: msg.info.id,
+        role: msg.info.role,
+        parts: [
+          {
+            type: "text",
+            text: "[older context evicted to fit window]",
+          },
+        ],
+      })
+      continue
+    }
+    lastPrunedRole = undefined
     if (msg.parts.length === 0) continue
 
     if (msg.info.role === "user") {
@@ -210,7 +247,9 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
-          if (options?.stripMedia && isMedia(part.mime)) {
+          const stripThis =
+            options?.stripMedia || (options?.keepMediaForLatestUser && msg.info.id !== latestUserId)
+          if (stripThis && isMedia(part.mime)) {
             userMessage.parts.push({
               type: "text",
               text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,
@@ -417,7 +456,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 export function toModelMessages(
   input: WithParts[],
   model: Provider.Model,
-  options?: { stripMedia?: boolean; toolOutputMaxChars?: number },
+  options?: { stripMedia?: boolean; keepMediaForLatestUser?: boolean; toolOutputMaxChars?: number },
 ): Promise<ModelMessage[]> {
   return Effect.runPromise(toModelMessagesEffect(input, model, options))
 }
@@ -672,6 +711,23 @@ export function fromError(
           isRetryable: true,
           metadata: {
             code: e.name,
+          },
+        },
+        { cause: e },
+      ).toObject()
+    case (e as SystemError)?.code === "UND_ERR_ABORTED" ||
+      (APICallError.isInstance(e) &&
+        (e.message === "aborted" || (e.cause as SystemError | undefined)?.code === "UND_ERR_ABORTED")):
+      if (ctx.aborted) {
+        return new AbortedError({ message: errorMessage(e) }, { cause: e }).toObject()
+      }
+      return new APIError(
+        {
+          message: "Connection aborted by server",
+          isRetryable: true,
+          metadata: {
+            code: "UND_ERR_ABORTED",
+            message: errorMessage(e),
           },
         },
         { cause: e },
