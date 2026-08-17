@@ -71,15 +71,13 @@ const getBase = (appId: string): Configuration => ({
   },
   files: ["out/**/*", "resources/**/*", "!resources/opencode-cli*"],
   extraResources: [
-    ...(channel === "dev"
-      ? [
-          {
-            from: "resources/",
-            to: "",
-            filter: ["opencode-cli*"],
-          },
-        ]
-      : []),
+    // wnxd fork: bundle the local CLI in every channel so the desktop sidecar
+    // runs this fork's build, not an upstream release.
+    {
+      from: "resources/",
+      to: "",
+      filter: ["opencode-cli*"],
+    },
     {
       from: "native/",
       to: "native/",
