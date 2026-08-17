@@ -6,6 +6,7 @@ import { Switch } from "@opencode-ai/ui/v2/switch-v2"
 import { Icon } from "@opencode-ai/ui/icon"
 import { useLanguage } from "@/context/language"
 import { useSettings, type CustomPromptSetting, defaultPromptPresets } from "@/context/settings"
+import { useProviders } from "@/hooks/use-providers"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
 import "./settings-v2.css"
@@ -15,22 +16,10 @@ interface OptionItem {
   label: string
 }
 
-const PROVIDER_OPTIONS: OptionItem[] = [
-  { value: "*", label: "All Providers (*)" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openai", label: "OpenAI" },
-  { value: "kiro", label: "Kiro (Syncode Builtin)" },
-  { value: "google", label: "Google Vertex / Gemini" },
-  { value: "groq", label: "Groq" },
-  { value: "ollama", label: "Ollama (Local)" },
-  { value: "deepseek", label: "DeepSeek" },
-  { value: "mistral", label: "Mistral AI" },
-  { value: "together", label: "Together AI" },
-]
-
 export const SettingsPromptsV2: Component = () => {
   const language = useLanguage()
   const settings = useSettings()
+  const providers = useProviders(() => undefined)
 
   const [editingId, setEditingId] = createSignal<string | null>(null)
   const [isCreating, setIsCreating] = createSignal(false)
@@ -41,6 +30,51 @@ export const SettingsPromptsV2: Component = () => {
   const [formModel, setFormModel] = createSignal("*")
   const [formPrompt, setFormPrompt] = createSignal("")
   const [formEnabled, setFormEnabled] = createSignal(true)
+
+  // Connected providers from server/runtime
+  const connectedProviders = createMemo(() => providers.connected())
+
+  const providerOptions = createMemo<OptionItem[]>(() => {
+    const connected = connectedProviders()
+    const list = connected.map((p) => ({
+      value: p.id,
+      label: p.name ? `${p.name} (${p.id})` : p.id,
+    }))
+    return [
+      { value: "*", label: "All Connected Providers (*)" },
+      ...list,
+    ]
+  })
+
+  const currentProviderOption = createMemo(() => {
+    const val = formProvider()
+    return providerOptions().find((opt) => opt.value === val) ?? { value: val, label: val }
+  })
+
+  // Dynamic models under the selected provider
+  const availableModels = createMemo<OptionItem[]>(() => {
+    const currentP = formProvider()
+    if (currentP === "*") {
+      return [{ value: "*", label: "All Models (*)" }]
+    }
+    const found = connectedProviders().find((p) => p.id === currentP)
+    if (!found || !found.models) {
+      return [{ value: "*", label: "All Models (*)" }]
+    }
+    const list = Object.values(found.models).map((m) => ({
+      value: m.id,
+      label: m.name ? `${m.name} (${m.id})` : m.id,
+    }))
+    return [
+      { value: "*", label: `All ${found.name || currentP} Models (*)` },
+      ...list,
+    ]
+  })
+
+  const currentModelOption = createMemo(() => {
+    const val = formModel()
+    return availableModels().find((opt) => opt.value === val) ?? { value: val, label: val }
+  })
 
   const resetForm = () => {
     setFormName("")
@@ -53,8 +87,9 @@ export const SettingsPromptsV2: Component = () => {
   }
 
   const startCreate = () => {
+    const firstConnected = connectedProviders()[0]?.id ?? "*"
     setFormName("New System Prompt")
-    setFormProvider("*")
+    setFormProvider(firstConnected)
     setFormModel("*")
     setFormPrompt("")
     setFormEnabled(true)
@@ -108,25 +143,24 @@ export const SettingsPromptsV2: Component = () => {
 
   const prompts = createMemo(() => settings.customPrompts.list())
   const activeCount = createMemo(() => prompts().filter((p) => p.enabled).length)
-  const currentProviderOption = createMemo(() =>
-    PROVIDER_OPTIONS.find((opt) => opt.value === formProvider()) ?? { value: formProvider(), label: formProvider() }
-  )
 
   return (
     <div class="settings-v2-tab">
       <div class="settings-v2-tab-header">
-        <div class="flex items-center justify-between">
-          <div class="flex flex-col gap-1">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col gap-1 min-w-0">
             <h2 class="settings-v2-tab-title">Custom System Prompts</h2>
             <p class="text-12-regular text-text-weak">
-              Override and customize the system prompt sent to AI models based on provider and model patterns.
+              Override and customize the system prompt sent to AI models for your connected providers.
             </p>
           </div>
           <Show when={!isCreating() && !editingId()}>
-            <ButtonV2 variant="neutral" size="normal" onClick={startCreate}>
-              <Icon name="plus-small" />
-              <span>New Prompt</span>
-            </ButtonV2>
+            <div class="shrink-0 whitespace-nowrap">
+              <ButtonV2 variant="neutral" size="normal" class="whitespace-nowrap shrink-0 flex items-center gap-1.5" onClick={startCreate}>
+                <Icon name="plus-small" />
+                <span class="whitespace-nowrap">New Prompt</span>
+              </ButtonV2>
+            </div>
           </Show>
         </div>
       </div>
@@ -139,7 +173,7 @@ export const SettingsPromptsV2: Component = () => {
               <span class="text-14-medium text-text-base font-semibold">
                 {editingId() ? "Edit System Prompt" : "Create New System Prompt"}
               </span>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 shrink-0">
                 <ButtonV2 variant="ghost" size="small" onClick={resetForm}>
                   Cancel
                 </ButtonV2>
@@ -187,23 +221,43 @@ export const SettingsPromptsV2: Component = () => {
               </div>
 
               <div class="flex flex-col gap-1.5">
-                <label class="text-12-medium text-text-weak">Provider Target</label>
+                <div class="flex items-center justify-between">
+                  <label class="text-12-medium text-text-weak">Connected Provider</label>
+                  <span class="text-10-regular text-text-weak">{connectedProviders().length} connected</span>
+                </div>
                 <SelectV2<OptionItem>
-                  options={PROVIDER_OPTIONS}
+                  options={providerOptions()}
                   current={currentProviderOption()}
                   value={(opt) => opt.value}
                   label={(opt) => opt.label}
-                  onSelect={(opt) => opt && setFormProvider(opt.value)}
+                  onSelect={(opt) => {
+                    if (!opt) return
+                    setFormProvider(opt.value)
+                    setFormModel("*")
+                  }}
                 />
               </div>
 
               <div class="flex flex-col gap-1.5">
-                <label class="text-12-medium text-text-weak">Model Pattern</label>
-                <TextInputV2
-                  value={formModel()}
-                  onInput={(e) => setFormModel(e.currentTarget.value)}
-                  placeholder="e.g. claude-3-7-sonnet*, gpt-4o, or * for all"
-                />
+                <label class="text-12-medium text-text-weak">Model Selection / Pattern</label>
+                <Show
+                  when={availableModels().length > 1}
+                  fallback={
+                    <TextInputV2
+                      value={formModel()}
+                      onInput={(e) => setFormModel(e.currentTarget.value)}
+                      placeholder="e.g. * or specific model id"
+                    />
+                  }
+                >
+                  <SelectV2<OptionItem>
+                    options={availableModels()}
+                    current={currentModelOption()}
+                    value={(opt) => opt.value}
+                    label={(opt) => opt.label}
+                    onSelect={(opt) => opt && setFormModel(opt.value)}
+                  />
+                </Show>
               </div>
             </div>
 
@@ -232,8 +286,10 @@ export const SettingsPromptsV2: Component = () => {
             <span class="text-20-semibold text-text-base">{activeCount()} / {prompts().length}</span>
           </div>
           <div class="p-4 rounded-lg bg-surface-base border border-border-base flex flex-col gap-1">
-            <span class="text-11-medium text-text-weak uppercase tracking-wider">Matching Precedence</span>
-            <span class="text-12-regular text-text-weak">Exact Model &gt; Model Wildcard &gt; Provider Wildcard &gt; Global (*)</span>
+            <span class="text-11-medium text-text-weak uppercase tracking-wider">Connected Providers</span>
+            <span class="text-12-regular text-text-weak font-mono">
+              {connectedProviders().map((p) => p.name || p.id).join(", ") || "None (configure in Providers tab)"}
+            </span>
           </div>
         </div>
 
