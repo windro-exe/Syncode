@@ -246,7 +246,7 @@ experimentalModels.instance(
 )
 
 it.instance(
-  "custom DeepSeek openai-compatible model defaults interleaved reasoning field",
+  "custom openai-compatible reasoning models default interleaved reasoning field",
   Effect.gen(function* () {
     const providers = yield* list
     const provider = providers[ProviderV2.ID.make("custom-provider")]
@@ -255,6 +255,18 @@ it.instance(
     expect(provider.models["deepseek-text"].capabilities.interleaved).toEqual({ field: "reasoning_text" })
     expect(provider.models["custom-reasoning"].capabilities.interleaved).toEqual({ field: "vendor_reasoning" })
     expect(provider.models["custom-model"].capabilities.interleaved).toBe(false)
+    expect(provider.models["glm-4.6"].capabilities.interleaved).toEqual({ field: "reasoning_content" })
+    expect(provider.models["qwen/qwen3-max"].capabilities.interleaved).toEqual({ field: "reasoning_content" })
+    expect(provider.models["tencent/hy3-preview"].capabilities.interleaved).toEqual({ field: "reasoning_content" })
+    expect(provider.models["moonshotai/kimi-k2.7-code"].capabilities.interleaved).toEqual({
+      field: "reasoning_content",
+    })
+    expect(provider.models["minimax/minimax-m3"].capabilities.interleaved).toEqual({ field: "reasoning_content" })
+    // Non-passthrough families must stay off even when reasoning-capable.
+    expect(provider.models["claude-opus-4.6"].capabilities.interleaved).toBe(false)
+    expect(provider.models["gemini-3-pro"].capabilities.interleaved).toBe(false)
+    expect(provider.models["gpt-5"].capabilities.interleaved).toBe(false)
+    expect(provider.models["grok-4"].capabilities.interleaved).toBe(false)
     expect(
       providers[ProviderV2.ID.make("custom-anthropic-provider")].models["deepseek-r1"].capabilities.interleaved,
     ).toBe(false)
@@ -272,6 +284,15 @@ it.instance(
             "deepseek-text": { name: "DeepSeek Text", interleaved: "reasoning_text" },
             "custom-reasoning": { name: "Custom Reasoning", interleaved: { field: "vendor_reasoning" } },
             "custom-model": { name: "Custom Model" },
+            "glm-4.6": { name: "GLM 4.6", reasoning: true },
+            "qwen/qwen3-max": { name: "Qwen3 Max", reasoning: true },
+            "tencent/hy3-preview": { name: "Hunyuan Hy3", reasoning: true },
+            "moonshotai/kimi-k2.7-code": { name: "Kimi K2.7 Code", reasoning: true },
+            "minimax/minimax-m3": { name: "MiniMax M3", reasoning: true },
+            "claude-opus-4.6": { name: "Claude Opus 4.6", reasoning: true },
+            "gemini-3-pro": { name: "Gemini 3 Pro", reasoning: true },
+            "gpt-5": { name: "GPT-5", reasoning: true },
+            "grok-4": { name: "Grok 4", reasoning: true },
           },
           options: { apiKey: "custom-key" },
         },

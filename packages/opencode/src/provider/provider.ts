@@ -1212,6 +1212,47 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
   return result
 }
 
+// Provider families whose OpenAI-compatible endpoints require assistant
+// `reasoning_content` to be echoed back on later turns while thinking mode is
+// active (DashScope/Qwen, Zhipu GLM, DeepSeek, Hunyuan, Moonshot/Kimi,
+// MiniMax, StepFun, Doubao, Ernie, Ring, MiMo, Kuaishou Kat, Agens). The
+// models.opencode.ai catalog only declares `interleaved` on some of them, so
+// missing entries are derived from the model id.
+const REASONING_CONTENT_FAMILIES = [
+  "deepseek",
+  "qwen",
+  "qwq",
+  "glm",
+  "hunyuan",
+  "tencent",
+  "kimi",
+  "moonshot",
+  "minimax",
+  "stepfun",
+  "doubao",
+  "volcengine",
+  "ernie",
+  "baidu",
+  "ring",
+  "inclusionai",
+  "mimo",
+  "xiaomi",
+  "agnes",
+  "sapiens",
+  "kat",
+  "kuaishou",
+  "hy",
+]
+
+function reasoningContentField(id: string): { field: "reasoning_content" } | undefined {
+  const lower = id.toLowerCase()
+  const matched = REASONING_CONTENT_FAMILIES.some((family) => {
+    const escaped = family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    return new RegExp(`(^|[^a-z])${escaped}([^a-z]|$)`, "i").test(lower)
+  })
+  return matched ? { field: "reasoning_content" } : undefined
+}
+
 function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
   const base: Model = {
     id: ModelV2.ID.make(model.id),
@@ -1251,7 +1292,13 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
         video: model.modalities?.output?.includes("video") ?? false,
         pdf: model.modalities?.output?.includes("pdf") ?? false,
       },
-      interleaved: typeof model.interleaved === "string" ? { field: model.interleaved } : (model.interleaved ?? false),
+      interleaved:
+        typeof model.interleaved === "string"
+          ? { field: model.interleaved }
+          : model.interleaved ??
+            (model.reasoning !== false && (model.provider?.npm ?? provider.npm) === "@ai-sdk/openai-compatible"
+              ? (reasoningContentField(model.id) ?? false)
+              : false),
     },
     release_date: model.release_date ?? "",
     variants: {},
@@ -1490,8 +1537,8 @@ const layer = Layer.effect(
                 interleaved:
                   (typeof model.interleaved === "string" ? { field: model.interleaved } : model.interleaved) ??
                   existingModel?.capabilities.interleaved ??
-                  (!existingModel && apiNpm === "@ai-sdk/openai-compatible" && apiID.includes("deepseek")
-                    ? { field: "reasoning_content" }
+                  (!existingModel && apiNpm === "@ai-sdk/openai-compatible"
+                    ? (reasoningContentField(apiID) ?? false)
                     : false),
               },
               cost: {
