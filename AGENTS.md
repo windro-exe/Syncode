@@ -143,8 +143,8 @@ The section below is specific to wnxd's local clone. It does not exist upstream 
 ### Layout
 
 - Origin: `https://github.com/windro-xdd/Syncode.git` (upstream is `anomalyco/opencode`)
-- Working branch: **`wnxd`** — every local feature commits here. `dist` holds prebuilt binaries + `version.json`; never develop on it.
-- Local source tree: `C:\wnx-projects\Syncode-wnxd` (Windows). Do not work out of `%TEMP%` — cleanup tools eat it.
+- Working branch: **`wnxd-v2`** — local feature branch rebased on `upstream/dev` (v1.18.18+, including v2 desktop and Effect v2). `dist` holds prebuilt binaries + `version.json`; never develop on it.
+- Local source tree: `C:\wnx-projects\personal\Syncode-wnxd` (Windows). Do not work out of `%TEMP%` — cleanup tools eat it.
 - Build: `bun run build` from `packages/opencode`. Output is a real production single-exe (~143 MB), bundled and minified — there is no separate "prod vs dev" binary. Add `--single` to build only the current platform instead of all 12 targets.
 
 ### Build and install (Windows) — the normal loop
@@ -188,20 +188,26 @@ the explicit check in `packages/opencode/src/provider/transform.ts` (`variants()
 
 ### Local features layered on top of upstream
 
-- **Memory system** (`packages/opencode/src/memory/`, `src/tool/memory.ts`, `src/tool/memory.txt`, `migration/2026*_memory_system/`).
+- **Memory system** (`packages/opencode/src/memory/`, `src/tool/memory.ts`, `src/tool/memory.txt`, `migration/20260710000000_memory_system.ts`).
   - Two-tier persistent memory (`global` + `session`) backed by SQLite + FTS5
-  - Replaces upstream's compaction loop: the prompt loop's overflow auto-trigger is neutered in `src/session/prompt.ts`, the system prompt now includes a live memory index in `src/session/system.ts`, and the `/remember` slash in `src/cli/cmd/tui/routes/session/index.tsx` pre-fills a snapshot directive
-  - The model is responsible for persisting durable facts to memory before context overflows, instead of relying on summarization
-- **`CLAUDE.md` auto-loading disabled** in `src/session/instruction.ts`. opencode reads only `AGENTS.md` (this file) and the deprecated `CONTEXT.md`. The user does not want Claude Code's user-level rules bleeding into opencode sessions.
-- **Auto-skill router + TOC-based loading** (`src/skill/router.ts`, `src/skill/active.ts`, `src/tool/skill_section.ts`).
-  - Each turn, a small router model (DeepSeek-V4-Flash by default; configurable via `skills.router_model` in opencode.json) is given the user's message and the names+descriptions of every available skill, and picks ONE skill or `none`.
-  - When picked, the system prompt gets an `<active_skill>` block containing the skill's `rules` (negative prompts) and a `<table_of_contents>`. The full body is NOT injected.
-  - The model uses the new `skill_section` tool to fetch one or more sections by id when it needs detail. The old `skill` tool that loaded the whole body is removed.
-  - Skill schema extended: `rules: string[]` (always-on rules for that skill) and `sections: [{id, title}]` (declares the TOC; the body has matching `## <id>` headings). Skills with no `rules`/`sections` still work — they get one implicit `body` section.
-  - Active skill name is persisted on the assistant message (`MessageV2.Assistant.skill`) and shown as `→ <name>` in the TUI status row next to the context bar.
-- **Built-in `author-skill` skill** (`src/skill/prompt/author-skill.md`). Routes when the user asks to create or update a skill; teaches the schema, rule-writing conventions, and TOC structure so new skills are well-formed.
-
-Add new features here as they land.
+  - BM25 relevance ranking with recency decay, salience weighting, and age rail
+  - Auto-memory: sliding-window background extraction of pruned turns into session notes
+  - Replaces upstream compaction loop with durable memory injection and soft checkpoint reminders
+  - `/remember` slash command in TUI (`packages/tui/src/routes/session/index.tsx`) pre-fills a snapshot directive
+- **`CLAUDE.md` auto-loading disabled** in `packages/opencode/src/session/instruction.ts`. Syncode reads only `AGENTS.md` (this file) and `CONTEXT.md`.
+- **Auto-skill router + TOC-based loading** (`packages/opencode/src/skill/router.ts`, `active.ts`, `packages/opencode/src/tool/skill_section.ts`).
+  - Router model selects relevant skills per turn without injecting large prompt bodies
+  - Active skills inject `<rules>` and `<table_of_contents>`; model fetches sections via `skill_section`
+  - Built-in `author-skill` teaches schema, rules conventions, and TOC structure
+- **Autonomous goal loop (`/goal`)** (`packages/opencode/src/session/goal.ts`, `packages/opencode/src/tool/goal.ts`).
+  - Evaluates user-defined goal condition using small checker model, continuing turns autonomously until met
+- **Ephemeral asides (`/btw`)** (`packages/opencode/src/session/ephemeral.ts`, `packages/tui/src/component/dialog-btw.tsx`).
+  - Concurrent, tool-less side questions answered against session context without polluting conversation history
+- **Context window breakdown & TUI bar** (`packages/opencode/src/tool/context.ts`, `packages/tui/src/component/dialog-context.tsx`, `packages/tui/src/component/prompt/index.tsx`).
+  - Slim horizontal bar (`━`/`─`) with live token count, limit, and percentage in prompt footer
+  - Instant client-side `/context` dialog with breakdown and usable budget calculations
+- **Background task monitoring (`/tasks`)** (`packages/opencode/src/tool/monitor.ts`, `tasks.ts`).
+- **Desktop app protection**: In-app updater hard-disabled in `packages/desktop/src/main/constants.ts` and `electron-builder.config.ts`.
 
 ### Upgrade workflow — DO NOT use the in-app auto-updater
 
@@ -211,7 +217,7 @@ Concretely:
 
 - The TUI's "Update Available" prompt: always answer **Skip**, never Confirm.
 - Never run `bun upgrade`, `opencode upgrade`, or any equivalent install script that pulls from GitHub releases or npm.
-- The version stamp (`OPENCODE_VERSION` baked at build time) is set high on purpose so the in-app upgrader's release-type check doesn't auto-install anything. If you see `1.16.0-wnxd` or higher, that's intentional — don't "fix" it down.
+- The version stamp (`OPENCODE_VERSION` baked at build time) is set high on purpose so the in-app upgrader's release-type check doesn't auto-install anything. If you see `1.19.0-wnxd-v2` or higher, that's intentional — don't "fix" it down.
 
 `scripts/update-remote.ps1` is the same hazard in local clothing: it downloads the
 prebuilt binary from the `dist` branch and swaps it in. That is correct for a machine
@@ -222,8 +228,8 @@ reverts the installed binary to whatever `dist` holds. On a dev machine, use
 When the user wants to take an upstream update:
 
 1. They will explicitly tell you ("update from upstream", "pull the latest opencode", etc.).
-2. From `wnxd` branch: `git fetch upstream && git merge upstream/dev` — resolve conflicts in the local-feature files (memory system, /remember, prompt loop neutering, instruction.ts).
-3. Run `bun typecheck` from `packages/opencode` and `packages/core`; fix anything broken before building.
+2. From `wnxd-v2` branch: `git fetch upstream && git merge upstream/dev` — resolve conflicts in local feature files.
+3. Run `bun typecheck` from `packages/opencode`, `packages/core`, and `packages/tui`; fix anything broken before building.
 4. Bump `SYNCODE_VERSION` to a stamp that semver-compares ABOVE the latest upstream npm release.
 5. Build and install in one step: `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`
 6. Confirm: `~/.local/bin/opencode.exe --version` prints the new stamp.
