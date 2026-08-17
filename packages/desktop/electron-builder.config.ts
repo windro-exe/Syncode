@@ -41,8 +41,20 @@ const APP_IDS = {
   prod: "ai.opencode.desktop",
 } as const
 
+const CHANNEL_NAMES = {
+  dev: { name: "opencode-dev", productName: "OpenCode Dev" },
+  beta: { name: "opencode-beta", productName: "OpenCode Beta" },
+  prod: { name: "opencode", productName: "OpenCode" },
+} as const
+
+const CHANNEL_GUIDS = {
+  dev: "7c3a0b4d-1e2f-4a5b-9c8d-0e1f2a3b4c5d",
+  beta: "8d4b1c5e-2f30-4b6a-ad9e-1f2a3b4c5d6e",
+  prod: "6b2a9e1c-0f1e-3a4b-8c7d-9e0f1a2b3c4d",
+} as const
+
 const getBase = (appId: string): Configuration => ({
-  artifactName: channel === "dev" ? "opencode-dev-${os}-${arch}.${ext}" : "opencode-${os}-${arch}.${ext}",
+  artifactName: `${CHANNEL_NAMES[channel].name}-\${os}-\${arch}.\${ext}`,
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -53,17 +65,21 @@ const getBase = (appId: string): Configuration => ({
   // https://developer.gnome.org/documentation/guidelines/maintainer/integrating.html
   // https://www.electron.build/docs/linux/
   extraMetadata: {
-    name: channel === "dev" ? "opencode-dev" : "opencode",
-    productName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
+    name: CHANNEL_NAMES[channel].name,
+    productName: CHANNEL_NAMES[channel].productName,
     desktopName: `${appId}.desktop`,
   },
   files: ["out/**/*", "resources/**/*", "!resources/opencode-cli*"],
   extraResources: [
-    {
-      from: "resources/",
-      to: "",
-      filter: ["opencode-cli*"],
-    },
+    ...(channel === "dev"
+      ? [
+          {
+            from: "resources/",
+            to: "",
+            filter: ["opencode-cli*"],
+          },
+        ]
+      : []),
     {
       from: "native/",
       to: "native/",
@@ -84,12 +100,12 @@ const getBase = (appId: string): Configuration => ({
     sign: true,
   },
   protocols: {
-    name: channel === "dev" ? "OpenCode Dev" : "OpenCode",
+    name: CHANNEL_NAMES[channel].productName,
     schemes: ["opencode"],
   },
   win: {
     icon: `resources/icons/icon.ico`,
-    executableName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
+    executableName: CHANNEL_NAMES[channel].productName,
     // Only wire signing under CI. Locally signWindows is a no-op, but merely
     // declaring signtoolOptions makes electron-builder download+extract the
     // winCodeSign tooling, which fails on Windows without admin/Developer Mode
@@ -99,12 +115,17 @@ const getBase = (appId: string): Configuration => ({
     verifyUpdateCodeSignature: false,
   },
   nsis: {
-    oneClick: true,
+    // Assisted NSIS uses productFilename for the per-user install directory.
+    oneClick: false,
     perMachine: false,
+    guid: CHANNEL_GUIDS[channel],
     installerIcon: `resources/icons/icon.ico`,
     installerHeaderIcon: `resources/icons/icon.ico`,
-    shortcutName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
-    uninstallDisplayName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
+    createStartMenuShortcut: true,
+    runAfterFinish: false,
+    include: "installer.nsh",
+    shortcutName: CHANNEL_NAMES[channel].productName,
+    uninstallDisplayName: CHANNEL_NAMES[channel].productName,
   },
   linux: {
     icon: `resources/icons`,
@@ -130,7 +151,7 @@ function getConfig() {
       return {
         ...base,
         appId,
-        productName: "OpenCode Dev",
+        productName: CHANNEL_NAMES[channel].productName,
         deb: { fpm: [metainfoFpm(appId)] },
         rpm: { packageName: "opencode-dev", fpm: [metainfoFpm(appId)] },
       }
@@ -139,7 +160,7 @@ function getConfig() {
       return {
         ...base,
         appId,
-        productName: "OpenCode Beta",
+        productName: CHANNEL_NAMES[channel].productName,
         protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
         deb: { fpm: [metainfoFpm(appId)] },
         rpm: { packageName: "opencode-beta", fpm: [metainfoFpm(appId)] },
@@ -149,7 +170,7 @@ function getConfig() {
       return {
         ...base,
         appId,
-        productName: "OpenCode",
+        productName: CHANNEL_NAMES[channel].productName,
         protocols: { name: "OpenCode", schemes: ["opencode"] },
         // wnxd fork: no `publish` feed — local fork must never auto-update from
         // upstream anomalyco releases (would wipe local features). Updater is

@@ -4,9 +4,9 @@ import type { Configuration } from "electron-builder"
 const legacyDesktopEntry = "resources/linux/opencode-desktop.desktop"
 
 const channels = [
-  { channel: "dev", appId: "ai.opencode.desktop.dev" },
-  { channel: "beta", appId: "ai.opencode.desktop.beta" },
-  { channel: "prod", appId: "ai.opencode.desktop" },
+  { channel: "dev", appId: "ai.opencode.desktop.dev", name: "opencode-dev", productName: "OpenCode Dev" },
+  { channel: "beta", appId: "ai.opencode.desktop.beta", name: "opencode-beta", productName: "OpenCode Beta" },
+  { channel: "prod", appId: "ai.opencode.desktop", name: "opencode", productName: "OpenCode" },
 ] as const
 
 for (const channel of channels) {
@@ -21,9 +21,18 @@ for (const channel of channels) {
     else process.env.OPENCODE_CHANNEL = previous
 
     expect(config.appId).toBe(channel.appId)
+    expect(config.extraMetadata?.name).toBe(channel.name)
+    expect(config.productName).toBe(channel.productName)
     expect(config.extraMetadata?.desktopName).toBe(`${channel.appId}.desktop`)
     expect(config.linux?.executableName).toBe(channel.appId)
     expect(config.linux?.desktop?.entry?.StartupWMClass).toBe(channel.appId)
+    expect(config.win?.executableName).toBe(channel.productName)
+    expect(config.nsis?.oneClick).toBe(false)
+    expect(config.nsis?.perMachine).toBe(false)
+    expect(config.nsis?.createStartMenuShortcut).toBe(true)
+    expect(config.nsis?.runAfterFinish).toBe(false)
+    expect(config.nsis?.include).toBe("installer.nsh")
+    expect(config.nsis?.shortcutName).toBe(channel.productName)
     expect(config.deb?.fpm).toContainEqual(expect.stringContaining(`/usr/share/metainfo/${channel.appId}.metainfo.xml`))
     expect(config.rpm?.fpm).toContainEqual(expect.stringContaining(`/usr/share/metainfo/${channel.appId}.metainfo.xml`))
   })
