@@ -4,7 +4,9 @@
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [switch]$RebuildCLI
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -17,8 +19,12 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $env:OPENCODE_CHANNEL = "prod"
 $env:VITE_OPENCODE_CHANNEL = "prod"
 
-Write-Host "`n[1/3] Building and installing production CLI..." -ForegroundColor Yellow
-& powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\install.ps1"
+if ($RebuildCLI) {
+    Write-Host "`n[1/3] Building and installing production CLI..." -ForegroundColor Yellow
+    & powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\install.ps1"
+} else {
+    Write-Host "`n[1/3] Skipping CLI rebuild (pass -RebuildCLI to rebuild CLI binary)" -ForegroundColor Gray
+}
 
 Write-Host "`n[2/3] Building and packaging production Desktop app..." -ForegroundColor Yellow
 Push-Location "$RepoRoot\packages\desktop"
@@ -30,18 +36,17 @@ try {
 }
 
 Write-Host "`n[3/3] Installing OpenCode Production to Windows..." -ForegroundColor Yellow
-$Installer = "$RepoRoot\packages\desktop\dist\opencode-desktop-win-x64.exe"
+$Installer = (Get-ChildItem "$RepoRoot\packages\desktop\dist\*.exe" -Exclude "*dev*", "*uninstaller*" | Select-Object -First 1).FullName
 $SourceDir = "$RepoRoot\packages\desktop\dist\win-unpacked"
-$TargetDir = "$env:LOCALAPPDATA\Programs\@opencode-aidesktop"
 
 Get-Process -Name OpenCode* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
-if (Test-Path $Installer) {
-    Write-Host "Running production installer silently..." -ForegroundColor Gray
+if ($Installer -and (Test-Path $Installer)) {
+    Write-Host "Running production installer silently: $Installer" -ForegroundColor Gray
     Start-Process -FilePath $Installer -ArgumentList "/S" -Wait
 } elseif (Test-Path $SourceDir) {
-    Copy-Item -Path "$SourceDir\*" -Destination $TargetDir -Recurse -Force
+    Copy-Item -Path "$SourceDir\*" -Destination "$env:LOCALAPPDATA\Programs\OpenCode" -Recurse -Force
 }
 
 $cliPath = "$env:USERPROFILE\.local\bin\opencode.exe"

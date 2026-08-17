@@ -27,13 +27,13 @@ try {
 }
 
 Write-Host "`n[2/2] Installing OpenCode Dev to Windows..." -ForegroundColor Yellow
-$Installer = "$RepoRoot\packages\desktop\dist\opencode-desktop-win-x64.exe"
+$Installer = (Get-ChildItem "$RepoRoot\packages\desktop\dist\opencode-dev-*.exe" -Exclude "*uninstaller*" | Select-Object -First 1).FullName
 
 Get-Process -Name "OpenCode Dev*" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
-if (Test-Path $Installer) {
-    Write-Host "Running OpenCode Dev installer silently..." -ForegroundColor Gray
+if ($Installer -and (Test-Path $Installer)) {
+    Write-Host "Running OpenCode Dev installer silently: $Installer" -ForegroundColor Gray
     Start-Process -FilePath $Installer -ArgumentList "/S" -Wait
 }
 

@@ -42,7 +42,7 @@ const APP_IDS = {
 } as const
 
 const getBase = (appId: string): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  artifactName: channel === "dev" ? "opencode-dev-${os}-${arch}.${ext}" : "opencode-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -53,6 +53,8 @@ const getBase = (appId: string): Configuration => ({
   // https://developer.gnome.org/documentation/guidelines/maintainer/integrating.html
   // https://www.electron.build/docs/linux/
   extraMetadata: {
+    name: channel === "dev" ? "opencode-dev" : "opencode",
+    productName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
     desktopName: `${appId}.desktop`,
   },
   files: ["out/**/*", "resources/**/*", "!resources/opencode-cli*"],
@@ -82,11 +84,12 @@ const getBase = (appId: string): Configuration => ({
     sign: true,
   },
   protocols: {
-    name: "OpenCode",
+    name: channel === "dev" ? "OpenCode Dev" : "OpenCode",
     schemes: ["opencode"],
   },
   win: {
     icon: `resources/icons/icon.ico`,
+    executableName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
     // Only wire signing under CI. Locally signWindows is a no-op, but merely
     // declaring signtoolOptions makes electron-builder download+extract the
     // winCodeSign tooling, which fails on Windows without admin/Developer Mode
@@ -100,6 +103,8 @@ const getBase = (appId: string): Configuration => ({
     perMachine: false,
     installerIcon: `resources/icons/icon.ico`,
     installerHeaderIcon: `resources/icons/icon.ico`,
+    shortcutName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
+    uninstallDisplayName: channel === "dev" ? "OpenCode Dev" : "OpenCode",
   },
   linux: {
     icon: `resources/icons`,
