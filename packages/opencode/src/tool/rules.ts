@@ -4,6 +4,10 @@ import DESCRIPTION from "./rules.txt"
 import { InstanceState } from "@/effect/instance-state"
 import { loadProjectRules, loadGlobalRules, addRule, removeRule } from "@/session/rules"
 
+import * as os from "node:os"
+import * as path from "node:path"
+import * as fs from "node:fs"
+
 export const Parameters = Schema.Struct({
   action: Schema.optional(
     Schema.Literals(["add", "list", "remove"]).annotate({
@@ -11,8 +15,8 @@ export const Parameters = Schema.Struct({
     }),
   ),
   scope: Schema.optional(
-    Schema.Literals(["project", "global"]).annotate({
-      description: '"project" (default) applies to this workspace only (.syncode/rules), "global" applies to all workspaces (~/.syncode/rules).',
+    Schema.Literals(["auto", "project", "global"]).annotate({
+      description: '"auto" (default: automatically uses project rules if inside a project session, or global rules if in a default session), "project" (strictly workspace rules), "global" (strictly global rules).',
     }),
   ),
   rule: Schema.optional(
@@ -43,9 +47,22 @@ export const RulesTool = Tool.define<typeof Parameters, Metadata, never>(
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
         Effect.gen(function* () {
           const action = params.action ?? "add"
-          const scope = params.scope ?? "project"
+          const rawScope = params.scope ?? "auto"
           const inst = yield* InstanceState.context
           const cwd = inst.directory
+
+          const isHome = path.resolve(cwd) === path.resolve(os.homedir())
+          const hasGit = inst.project.vcs === "git" || fs.existsSync(path.join(cwd, ".git"))
+          const isProjectSession = hasGit && !isHome
+
+          const scope: "project" | "global" =
+            rawScope === "project"
+              ? "project"
+              : rawScope === "global"
+                ? "global"
+                : isProjectSession
+                  ? "project"
+                  : "global"
 
           if (action === "list") {
             const projectFiles = loadProjectRules(cwd)
@@ -55,7 +72,7 @@ export const RulesTool = Tool.define<typeof Parameters, Metadata, never>(
             const globalRules = globalFiles.flatMap((f) => f.rules.map((r) => `  - ${r} (${f.name})`))
 
             const lines = [
-              "=== Active Operational Rules ===",
+              `=== Active Operational Rules (Current Session: ${isProjectSession ? "Project" : "Default/Global"}) ===`,
               "",
               "Project Rules:",
               projectRules.length > 0 ? projectRules.join("\n") : "  (none)",
@@ -67,7 +84,7 @@ export const RulesTool = Tool.define<typeof Parameters, Metadata, never>(
             return {
               title: "Active rules",
               output: lines.join("\n"),
-              metadata: { action } as Metadata,
+              metadata: { action, scope } as Metadata,
             }
           }
 
@@ -107,10 +124,10 @@ export const RulesTool = Tool.define<typeof Parameters, Metadata, never>(
           return {
             title: `Rule added (${scope})`,
             output: [
-              `Successfully added ${scope} rule:`,
+              `Successfully added ${scope} rule (Session: ${isProjectSession ? "Project" : "Default"}):`,
               `> ${ruleText}`,
               `Saved to: ${res.filePath}`,
-              `This rule is now active and will be strictly enforced on all subsequent model turns.`,
+              `This rule is active and will be strictly enforced as an inviolable constraint on all future turns.`,
             ].join("\n"),
             metadata: { action, scope, rule: ruleText, filePath: res.filePath } as Metadata,
           }

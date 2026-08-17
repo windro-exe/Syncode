@@ -121,7 +121,86 @@ export function loadProjectRules(cwd: string): RuleFile[] {
     }
   }
 
+  // Also check desktop default.dat store files for UI project rules (project-rules:<cwd>)
+  const datDirs = [
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop.dev") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode") : null,
+    path.join(os.homedir(), ".config", "opencode"),
+  ].filter(Boolean) as string[]
+
+  for (const datDir of datDirs) {
+    const datPath = path.join(datDir, "default.dat")
+    if (fs.existsSync(datPath)) {
+      try {
+        const raw = fs.readFileSync(datPath, "utf8")
+        const parsed = JSON.parse(raw)
+        const key1 = `project-rules:${cwd}`
+        const key2 = `project-rules:${cwd.replace(/\\/g, "/")}`
+        const rulesJson = parsed[key1] || parsed[key2]
+        if (rulesJson) {
+          const val = typeof rulesJson === "string" ? JSON.parse(rulesJson) : rulesJson
+          if (val && Array.isArray(val.rules)) {
+            const rules = val.rules.map((r: any) => String(r).trim()).filter(Boolean)
+            if (rules.length > 0) {
+              results.push({
+                name: "ui.projectRules",
+                path: datPath,
+                rules,
+                enabled: true,
+              })
+            }
+          }
+        }
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
   return results
+}
+
+export function loadProjectIdea(cwd: string): string | undefined {
+  if (!cwd) return undefined
+  // Check IDEA.md in project root
+  const ideaFile = path.join(cwd, "IDEA.md")
+  if (fs.existsSync(ideaFile) && fs.statSync(ideaFile).isFile()) {
+    try {
+      const raw = fs.readFileSync(ideaFile, "utf8").trim()
+      if (raw) return raw
+    } catch {}
+  }
+
+  // Check desktop default.dat store for UI project idea (project-idea:<cwd>)
+  const datDirs = [
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "ai.opencode.desktop.dev") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode") : null,
+    path.join(os.homedir(), ".config", "opencode"),
+  ].filter(Boolean) as string[]
+
+  for (const datDir of datDirs) {
+    const datPath = path.join(datDir, "default.dat")
+    if (fs.existsSync(datPath)) {
+      try {
+        const raw = fs.readFileSync(datPath, "utf8")
+        const parsed = JSON.parse(raw)
+        const key1 = `project-idea:${cwd}`
+        const key2 = `project-idea:${cwd.replace(/\\/g, "/")}`
+        const ideaJson = parsed[key1] || parsed[key2]
+        if (ideaJson) {
+          const val = typeof ideaJson === "string" ? JSON.parse(ideaJson) : ideaJson
+          if (val && typeof val.idea === "string" && val.idea.trim()) {
+            return val.idea.trim()
+          }
+        }
+      } catch {
+        // Ignore
+      }
+    }
+  }
+  return undefined
 }
 
 export function loadGlobalRules(): RuleFile[] {
@@ -227,11 +306,13 @@ export function formatRulesSystemPrompt(opts: {
   projectRules: string[]
   globalRules: string[]
   projectPath?: string
+  projectIdea?: string
 }): string | undefined {
   const projectList = opts.projectRules.map((r) => r.trim()).filter(Boolean)
   const globalList = opts.globalRules.map((r) => r.trim()).filter(Boolean)
+  const idea = opts.projectIdea?.trim()
 
-  if (projectList.length === 0 && globalList.length === 0) {
+  if (projectList.length === 0 && globalList.length === 0 && !idea) {
     return undefined
   }
 
@@ -242,6 +323,14 @@ export function formatRulesSystemPrompt(opts: {
     "Where a project rule conflicts with general defaults, persona, or phrasing, the project rule takes absolute precedence.",
     "",
   ]
+
+  if (idea) {
+    sections.push("### Project Purpose & Intent (IDEA.md)")
+    sections.push("<project_intent>")
+    sections.push(idea)
+    sections.push("</project_intent>")
+    sections.push("")
+  }
 
   if (projectList.length > 0) {
     sections.push("### Project-Specific Rules")

@@ -13,7 +13,7 @@ import { withTransientReadRetry } from "@/util/effect-http-client"
 import { Global } from "@opencode-ai/core/global"
 import type { MessageV2 } from "./message-v2"
 import type { MessageID } from "./schema"
-import { loadProjectRules, loadGlobalRules, formatRulesSystemPrompt } from "./rules"
+import { loadProjectRules, loadProjectIdea, loadGlobalRules, formatRulesSystemPrompt } from "./rules"
 
 function extract(messages: SessionV1.WithParts[]) {
   const paths = new Set<string>()
@@ -169,10 +169,12 @@ const layer: Layer.Layer<
       const globalRuleFiles = loadGlobalRules()
       const projectRules = projectRuleFiles.flatMap((f) => f.rules)
       const globalRules = globalRuleFiles.flatMap((f) => f.rules)
+      const projectIdea = loadProjectIdea(ctx.directory)
       const rulesBlock = formatRulesSystemPrompt({
         projectRules,
         globalRules,
         projectPath: ctx.directory,
+        projectIdea,
       })
 
       return [
