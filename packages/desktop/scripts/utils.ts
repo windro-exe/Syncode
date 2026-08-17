@@ -71,8 +71,18 @@ export function getCurrentCli(target = RUST_TARGET ?? nativeTarget()) {
 
 export async function downloadCliToResources() {
   const cli = getCurrentCli()
-  const directory = await mkdtemp(join(tmpdir(), "opencode-cli-"))
   const dest = windowsify("resources/opencode-cli")
+  const home = process.env.USERPROFILE || process.env.HOME || ""
+  const localInstalled = windowsify(join(home, ".local", "bin", "opencode"))
+  const fs = await import("node:fs")
+
+  if (fs.existsSync(localInstalled)) {
+    await copyFile(localInstalled, dest)
+    console.log(`Copied local CLI ${localInstalled} to ${dest}`)
+    return
+  }
+
+  const directory = await mkdtemp(join(tmpdir(), "opencode-cli-"))
   try {
     await $`bun install --no-save --cwd ${directory} ${`${cli.package}@${CLI_VERSION}`} ${`--os=${cli.os}`} ${`--cpu=${cli.cpu}`}`
     await copyFile(

@@ -12,6 +12,9 @@ import { useLanguage } from "@/context/language"
 import { useNotification } from "@/context/notification"
 import { ProjectIcon, SessionItem, type SessionItemProps } from "./sidebar-items"
 import { displayName, sortedRootSessions } from "./helpers"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { DialogProjectRules } from "@/components/dialog-project-rules"
+import { useServer, ServerConnection } from "@/context/server"
 
 export type ProjectSidebarContext = {
   currentDir: Accessor<string>
@@ -75,6 +78,8 @@ const ProjectTile = (props: {
 }): JSX.Element => {
   const notification = useNotification()
   const layout = useLayout()
+  const dialog = useDialog()
+  const server = useServer()
   const unseenCount = createMemo(() =>
     props.dirs().reduce((total, directory) => total + notification.project.unseenCount(directory), 0),
   )
@@ -150,6 +155,9 @@ const ProjectTile = (props: {
         <ContextMenu.Content>
           <ContextMenu.Item onSelect={() => props.showEditProjectDialog(props.project)}>
             <ContextMenu.ItemLabel>{props.language.t("common.edit")}</ContextMenu.ItemLabel>
+          </ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => void dialog.show(() => <DialogProjectRules server={server.list[0]} project={props.project} />)}>
+            <ContextMenu.ItemLabel>Project Rules</ContextMenu.ItemLabel>
           </ContextMenu.Item>
           <ContextMenu.Item
             data-action="project-workspaces-toggle"

@@ -12,7 +12,9 @@ import { SettingsModels } from "./settings-models"
 import { SettingsServers } from "./settings-servers"
 import { SettingsPromptsV2 } from "./settings-v2/prompts"
 import { SettingsAppearanceV2 } from "./settings-v2/appearance"
-import { SettingsCustomizationsV2 } from "./settings-v2/customizations"
+import { SettingsRulesV2 } from "./settings-v2/rules"
+import { SettingsSkillsV2 } from "./settings-v2/skills"
+import { SettingsEngineV2 } from "./settings-v2/engine"
 import { SettingsAboutV2 } from "./settings-v2/about"
 
 export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
@@ -63,9 +65,23 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
                       <Icon name="prompt" />
                       Custom Prompts
                     </Tabs.Trigger>
-                    <Tabs.Trigger value="customizations">
+                    <Tabs.Trigger value="rules">
+                      <Icon name="shield" />
+                      Global Rules
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="skills">
                       <Icon name="brain" />
-                      Skills & Rules
+                      Skills
+                    </Tabs.Trigger>
+                  </div>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <Tabs.SectionTitle>Engine</Tabs.SectionTitle>
+                  <div class="flex flex-col gap-1.5 w-full">
+                    <Tabs.Trigger value="engine">
+                      <Icon name="server" />
+                      Engine & Memory
                     </Tabs.Trigger>
                   </div>
                 </div>
@@ -117,8 +133,14 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
         <Tabs.Content value="prompts" class="no-scrollbar">
           <SettingsPromptsV2 />
         </Tabs.Content>
-        <Tabs.Content value="customizations" class="no-scrollbar">
-          <SettingsCustomizationsV2 />
+        <Tabs.Content value="rules" class="no-scrollbar">
+          <SettingsRulesV2 />
+        </Tabs.Content>
+        <Tabs.Content value="skills" class="no-scrollbar">
+          <SettingsSkillsV2 />
+        </Tabs.Content>
+        <Tabs.Content value="engine" class="no-scrollbar">
+          <SettingsEngineV2 />
         </Tabs.Content>
         <Tabs.Content value="servers" class="no-scrollbar">
           <SettingsServers />

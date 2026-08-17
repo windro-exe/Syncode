@@ -13,6 +13,7 @@ import { withTransientReadRetry } from "@/util/effect-http-client"
 import { Global } from "@opencode-ai/core/global"
 import type { MessageV2 } from "./message-v2"
 import type { MessageID } from "./schema"
+import { loadProjectRules, loadGlobalRules, formatRulesSystemPrompt } from "./rules"
 
 function extract(messages: SessionV1.WithParts[]) {
   const paths = new Set<string>()
@@ -154,6 +155,7 @@ const layer: Layer.Layer<
 
     const system = Effect.fn("Instruction.system")(function* () {
       const config = yield* cfg.get()
+      const ctx = yield* InstanceState.context
       const paths = yield* systemPaths()
       const urls = (config.instructions ?? []).filter(
         (item) => item.startsWith("https://") || item.startsWith("http://"),
@@ -162,7 +164,19 @@ const layer: Layer.Layer<
       const files = yield* Effect.forEach(Array.from(paths), read, { concurrency: 8 })
       const remote = yield* Effect.forEach(urls, fetch, { concurrency: 4 })
 
+      // Load atomic project and global rules
+      const projectRuleFiles = loadProjectRules(ctx.directory)
+      const globalRuleFiles = loadGlobalRules()
+      const projectRules = projectRuleFiles.flatMap((f) => f.rules)
+      const globalRules = globalRuleFiles.flatMap((f) => f.rules)
+      const rulesBlock = formatRulesSystemPrompt({
+        projectRules,
+        globalRules,
+        projectPath: ctx.directory,
+      })
+
       return [
+        ...(rulesBlock ? [rulesBlock] : []),
         ...Array.from(paths).flatMap((item, i) => (files[i] ? [`Instructions from: ${item}\n${files[i]}`] : [])),
         ...urls.flatMap((item, i) => (remote[i] ? [`Instructions from: ${item}\n${remote[i]}`] : [])),
       ]

@@ -292,8 +292,18 @@ const layer = Layer.effect(
             return
 
           case "reasoning-delta":
-            // Match dev: silently drop orphan deltas (no preceding reasoning-start).
-            if (!(value.id in ctx.reasoningMap)) return
+            if (!(value.id in ctx.reasoningMap)) {
+              ctx.reasoningMap[value.id] = {
+                id: PartID.ascending(),
+                messageID: ctx.assistantMessage.id,
+                sessionID: ctx.assistantMessage.sessionID,
+                type: "reasoning",
+                text: "",
+                time: { start: Date.now() },
+                metadata: value.providerMetadata,
+              }
+              yield* session.updatePart(ctx.reasoningMap[value.id])
+            }
             ctx.reasoningMap[value.id].text += value.text
             if (value.providerMetadata) ctx.reasoningMap[value.id].metadata = value.providerMetadata
             yield* session.updatePartDelta({
@@ -435,6 +445,12 @@ const layer = Layer.effect(
           case "step-finish": {
             const completedSnapshot = yield* snapshot.track()
             yield* Effect.forEach(Object.keys(ctx.reasoningMap), finishReasoning)
+            if (ctx.currentText) {
+              const end = Date.now()
+              ctx.currentText.time = { start: ctx.currentText.time?.start ?? end, end }
+              yield* session.updatePart(ctx.currentText)
+              ctx.currentText = undefined
+            }
             const usage = Session.getUsage({
               model: ctx.model,
               usage: value.usage ?? new Usage({}),
@@ -497,7 +513,18 @@ const layer = Layer.effect(
             return
 
           case "text-delta":
-            if (!ctx.currentText) return
+            if (!ctx.currentText) {
+              ctx.currentText = {
+                id: PartID.ascending(),
+                messageID: ctx.assistantMessage.id,
+                sessionID: ctx.assistantMessage.sessionID,
+                type: "text",
+                text: "",
+                time: { start: Date.now() },
+                metadata: value.providerMetadata,
+              }
+              yield* session.updatePart(ctx.currentText)
+            }
             ctx.currentText.text += value.text
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePartDelta({

@@ -10,7 +10,9 @@ import { SettingsProvidersV2 } from "./providers"
 import { SettingsModelsV2 } from "./models"
 import { SettingsPromptsV2 } from "./prompts"
 import { SettingsAppearanceV2 } from "./appearance"
-import { SettingsCustomizationsV2 } from "./customizations"
+import { SettingsRulesV2 } from "./rules"
+import { SettingsSkillsV2 } from "./skills"
+import { SettingsEngineV2 } from "./engine"
 import { SettingsAboutV2 } from "./about"
 import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
@@ -83,9 +85,23 @@ export const DialogSettings: Component<{
                       <Icon name="prompt" />
                       Custom Prompts
                     </TabsV2.Trigger>
-                    <TabsV2.Trigger value="customizations">
+                    <TabsV2.Trigger value="rules">
+                      <Icon name="shield" />
+                      Global Rules
+                    </TabsV2.Trigger>
+                    <TabsV2.Trigger value="skills">
                       <Icon name="brain" />
-                      Skills & Rules
+                      Skills
+                    </TabsV2.Trigger>
+                  </div>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <TabsV2.SectionTitle>Engine</TabsV2.SectionTitle>
+                  <div class="flex flex-col gap-1.5 w-full">
+                    <TabsV2.Trigger value="engine">
+                      <Icon name="server" />
+                      Engine & Memory
                     </TabsV2.Trigger>
                   </div>
                 </div>
@@ -137,8 +153,14 @@ export const DialogSettings: Component<{
         <TabsV2.Content value="prompts" class="settings-v2-panel">
           <SettingsPromptsV2 />
         </TabsV2.Content>
-        <TabsV2.Content value="customizations" class="settings-v2-panel">
-          <SettingsCustomizationsV2 />
+        <TabsV2.Content value="rules" class="settings-v2-panel">
+          <SettingsRulesV2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="skills" class="settings-v2-panel">
+          <SettingsSkillsV2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="engine" class="settings-v2-panel">
+          <SettingsEngineV2 />
         </TabsV2.Content>
         <TabsV2.Content value="servers" class="settings-v2-panel">
           <SettingsServersV2 />

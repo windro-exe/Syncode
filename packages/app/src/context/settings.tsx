@@ -28,6 +28,13 @@ export interface CustomPromptSetting {
   enabled: boolean
 }
 
+export interface GlobalRuleSetting {
+  id: string
+  rule: string
+  category?: string
+  enabled: boolean
+}
+
 export interface SyncodeSettings {
   skillRouter: boolean
   routerModel: string
@@ -67,6 +74,7 @@ export interface Settings {
     terminal: string
   }
   customPrompts: CustomPromptSetting[]
+  globalRules: GlobalRuleSetting[]
   syncode: SyncodeSettings
   keybinds: Record<string, string>
   permissions: {
@@ -248,6 +256,39 @@ export const defaultPromptPresets: CustomPromptSetting[] = [
   },
 ]
 
+export const defaultGlobalRules: GlobalRuleSetting[] = [
+  {
+    id: "rule-1",
+    rule: "Never use the `any` type in TypeScript — always use strict types or unknown with type narrowing.",
+    category: "Code Quality",
+    enabled: true,
+  },
+  {
+    id: "rule-2",
+    rule: "Avoid try/catch wrappers where possible; prefer Effect/Option/Result pipelines or early returns.",
+    category: "Architecture",
+    enabled: true,
+  },
+  {
+    id: "rule-3",
+    rule: "Use Conventional Commits format (feat, fix, refactor, chore, test) with descriptive scopes.",
+    category: "Workflow",
+    enabled: true,
+  },
+  {
+    id: "rule-4",
+    rule: "Do not extract single-use helpers preemptively; inline logic unless genuinely reusable.",
+    category: "Simplicity",
+    enabled: true,
+  },
+  {
+    id: "rule-5",
+    rule: "Always verify file paths and run typechecks before claiming completion of a refactor.",
+    category: "Verification",
+    enabled: true,
+  },
+]
+
 const defaultSettings: Settings = {
   general: {
     autoSave: true,
@@ -271,6 +312,7 @@ const defaultSettings: Settings = {
     terminal: "",
   },
   customPrompts: defaultPromptPresets,
+  globalRules: defaultGlobalRules,
   syncode: {
     skillRouter: true,
     routerModel: "small_model",
@@ -645,6 +687,32 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
           const current = store.customPrompts ?? defaultSettings.customPrompts
           const next = current.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item))
           setStore("customPrompts", reconcile(next))
+        },
+      },
+      globalRules: {
+        list: withFallback(() => store.globalRules, defaultSettings.globalRules),
+        set(rules: GlobalRuleSetting[]) {
+          setStore("globalRules", reconcile(rules))
+        },
+        add(rule: Omit<GlobalRuleSetting, "id">) {
+          const id = `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+          const current = store.globalRules ?? defaultSettings.globalRules
+          setStore("globalRules", [...current, { ...rule, id }])
+        },
+        update(id: string, update: Partial<GlobalRuleSetting>) {
+          const current = store.globalRules ?? defaultSettings.globalRules
+          const next = current.map((item) => (item.id === id ? { ...item, ...update } : item))
+          setStore("globalRules", reconcile(next))
+        },
+        remove(id: string) {
+          const current = store.globalRules ?? defaultSettings.globalRules
+          const next = current.filter((item) => item.id !== id)
+          setStore("globalRules", reconcile(next))
+        },
+        toggle(id: string) {
+          const current = store.globalRules ?? defaultSettings.globalRules
+          const next = current.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item))
+          setStore("globalRules", reconcile(next))
         },
       },
       syncode: {
