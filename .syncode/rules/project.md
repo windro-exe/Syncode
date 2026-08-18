@@ -1,0 +1,1 @@
+- When updating or installing a new Syncode/OpenCode desktop build (deploy-prod.ps1, deploy-dev.ps1, or any equivalent install), always launch scripts/verify-prod-install.ps1 in a visible terminal window at the end so windro can see the install result without asking the agent (the agent lives inside OpenCode). The verification window must stay open until dismissed.

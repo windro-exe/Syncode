@@ -61,3 +61,6 @@ Write-Host "`n[DONE] OpenCode Dev successfully installed!" -ForegroundColor Gree
 Write-Host "Start Menu Entry: OpenCode Dev" -ForegroundColor Green
 Write-Host "Desktop Binary:   $TargetExe" -ForegroundColor Green
 Write-Host "Data Directory:   $devData" -ForegroundColor Green
+
+# Visible verification window so the result is readable without asking the agent.
+Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File","$PSScriptRoot\verify-prod-install.ps1","-Channel","dev") -WorkingDirectory "$env:USERPROFILE"
