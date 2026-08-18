@@ -99,9 +99,10 @@ if (Test-Path -LiteralPath $lnk) {
     $failures++
 }
 
-# 5. Running processes come from the installed dir (case-insensitive: Programs\opencode
-# and Programs\OpenCode are the same physical folder on Windows).
-$running = @(Get-Process -Name "OpenCode*" -ErrorAction SilentlyContinue)
+# 5. Running processes for this channel come from the installed dir. Do not let
+# prod processes make the dev verification fail (or vice versa).
+$processName = if ($isProd) { "OpenCode*" } else { "OpenCode Dev*" }
+$running = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0) {
     $paths = $running | Select-Object -ExpandProperty Path -Unique
     $stray = $paths | Where-Object { $_ -and -not [string]::Equals($_, $targetExe, [System.StringComparison]::OrdinalIgnoreCase) }
