@@ -73,7 +73,11 @@ export const GlobalRules = Schema.Array(GlobalRule)
 
 export const GlobalRuleDeleteInput = Schema.Struct({
   rule: Schema.String,
-  filePath: Schema.String,
+  filePath: Schema.optional(Schema.String),
+})
+
+export const GlobalRuleAddInput = Schema.Struct({
+  rule: Schema.String,
 })
 
 export const GlobalPaths = {
@@ -124,8 +128,8 @@ export const GlobalApi = HttpApi.make("global").add(
           identifier: "global.config.update",
           summary: "Update global configuration",
           description: "Update global OpenCode configuration settings and preferences.",
-          }),
-        ),
+        }),
+      ),
       HttpApiEndpoint.get("rules", GlobalPaths.rules, {
         success: described(GlobalRules, "List global operational rules"),
       }).annotateMerge(
@@ -133,6 +137,17 @@ export const GlobalApi = HttpApi.make("global").add(
           identifier: "global.rules",
           summary: "List global rules",
           description: "Retrieve global operational rules from the configured rule files and settings.",
+        }),
+      ),
+      HttpApiEndpoint.post("rulesAdd", GlobalPaths.rules, {
+        payload: GlobalRuleAddInput,
+        success: described(GlobalRules, "Rule added"),
+        error: HttpApiError.BadRequest,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.rules.add",
+          summary: "Add a global rule",
+          description: "Append a global operational rule to rules.md.",
         }),
       ),
       HttpApiEndpoint.delete("rulesDelete", GlobalPaths.rules, {

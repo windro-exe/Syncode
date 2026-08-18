@@ -7345,7 +7345,7 @@ export type GlobalConfigUpdateResponse = GlobalConfigUpdateResponses[keyof Globa
 export type GlobalRulesDeleteData = {
   body?: {
     rule: string
-    filePath: string
+    filePath?: string
   }
   path?: never
   query?: never
@@ -7399,6 +7399,38 @@ export type GlobalRulesResponses = {
 }
 
 export type GlobalRulesResponse = GlobalRulesResponses[keyof GlobalRulesResponses]
+
+export type GlobalRulesAddData = {
+  body?: {
+    rule: string
+  }
+  path?: never
+  query?: never
+  url: "/global/rules"
+}
+
+export type GlobalRulesAddErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type GlobalRulesAddError = GlobalRulesAddErrors[keyof GlobalRulesAddErrors]
+
+export type GlobalRulesAddResponses = {
+  /**
+   * Rule added
+   */
+  200: Array<{
+    rule: string
+    file: string
+    path: string
+    enabled: boolean
+  }>
+}
+
+export type GlobalRulesAddResponse = GlobalRulesAddResponses[keyof GlobalRulesAddResponses]
 
 export type GlobalDisposeData = {
   body?: never
@@ -8511,7 +8543,7 @@ export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterSt
 export type RulesDeleteData = {
   body?: {
     rule: string
-    filePath: string
+    filePath?: string
   }
   path?: never
   query?: {
@@ -8571,6 +8603,41 @@ export type RulesListResponses = {
 }
 
 export type RulesListResponse = RulesListResponses[keyof RulesListResponses]
+
+export type RulesAddData = {
+  body?: {
+    rule: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/rules"
+}
+
+export type RulesAddErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type RulesAddError = RulesAddErrors[keyof RulesAddErrors]
+
+export type RulesAddResponses = {
+  /**
+   * Rule added
+   */
+  200: Array<{
+    rule: string
+    file: string
+    path: string
+    enabled: boolean
+  }>
+}
+
+export type RulesAddResponse = RulesAddResponses[keyof RulesAddResponses]
 
 export type McpStatusData = {
   body?: never

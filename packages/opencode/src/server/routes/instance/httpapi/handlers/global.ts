@@ -5,7 +5,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { loadGlobalRules, removeRule } from "@/session/rules"
+import { loadGlobalRules, removeRule, addRule } from "@/session/rules"
 import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -103,8 +103,20 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       )
     })
 
+    const rulesAdd = Effect.fn("GlobalHttpApi.rulesAdd")(function* (ctx: { payload: { rule: string } }) {
+      addRule({ scope: "global", rule: ctx.payload.rule })
+      return loadGlobalRules().flatMap((file) =>
+        file.rules.map((rule) => ({
+          rule,
+          file: file.name,
+          path: file.path,
+          enabled: file.enabled,
+        })),
+      )
+    })
+
     const rulesDelete = Effect.fn("GlobalHttpApi.rulesDelete")(function* (ctx: {
-      payload: { rule: string; filePath: string }
+      payload: { rule: string; filePath?: string }
     }) {
       const result = removeRule({
         scope: "global",
@@ -177,6 +189,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       .handle("configGet", configGet)
       .handle("configUpdate", configUpdate)
       .handle("rules", rules)
+      .handle("rulesAdd", rulesAdd)
       .handle("rulesDelete", rulesDelete)
       .handle("dispose", dispose)
       .handleRaw("upgrade", upgradeRaw)
