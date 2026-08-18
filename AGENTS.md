@@ -136,14 +136,20 @@ const table = sqliteTable("session", {
 
 ---
 
-## wnxd local fork (NOT upstream)
+## Syncode — standalone fork
 
-The section below is specific to wnxd's local clone. It does not exist upstream and is intended for any agent (opencode itself, Claude Code, etc.) working ON this codebase.
+This section is specific to this standalone fork. It does not exist upstream and is
+intended for any agent (opencode itself, Claude Code, etc.) working ON this codebase.
 
-### Layout
+### Repository & branching model
 
-- Origin: `https://github.com/windro-xdd/Syncode.git` (upstream is `anomalyco/opencode`)
-- Working branch: **`wnxd-v2`** — local feature branch rebased on `upstream/dev` (v1.18.18+, including v2 desktop and Effect v2). `dist` holds prebuilt binaries + `version.json`; never develop on it.
+- Origin: `git@gh-personal:windro-exe/Syncode.git`. **Syncode is fully standalone —
+  there is NO upstream remote and no connection to `anomalyco/opencode`.**
+- Branching model — every piece of work gets its own branch:
+  1. `feature/<name>` or `fix/<name>` branched off `dev` for the work.
+  2. Merge the branch into `dev` (integration branch) when done.
+  3. Merge `dev` into `prod` only for a release/deploy.
+- `dev` is the default branch on GitHub. `dist` holds prebuilt binaries + `version.json`; never develop on it.
 - Local source tree: `C:\wnx-projects\personal\Syncode-wnxd` (Windows). Do not work out of `%TEMP%` — cleanup tools eat it.
 - Build: `bun run build` from `packages/opencode`. Output is a real production single-exe (~143 MB), bundled and minified — there is no separate "prod vs dev" binary. Add `--single` to build only the current platform instead of all 12 targets.
 
@@ -211,7 +217,8 @@ the explicit check in `packages/opencode/src/provider/transform.ts` (`variants()
 
 ### Upgrade workflow — DO NOT use the in-app auto-updater
 
-The user has explicitly said: never let the auto-updater run. It will overwrite `~/.local/bin/opencode.exe` with the upstream npm release and erase every local feature.
+The user has explicitly said: never let the auto-updater run. It will overwrite
+`~/.local/bin/opencode.exe` with a stock npm/GitHub release and erase every local feature.
 
 Concretely:
 
@@ -225,14 +232,13 @@ that only consumes published builds, but running it after local source edits sil
 reverts the installed binary to whatever `dist` holds. On a dev machine, use
 `scripts/install.ps1` instead.
 
-When the user wants to take an upstream update:
+Syncode is standalone — there is no upstream to merge from. Feature and fix branches
+are the only update path:
 
-1. They will explicitly tell you ("update from upstream", "pull the latest opencode", etc.).
-2. From `wnxd-v2` branch: `git fetch upstream && git merge upstream/dev` — resolve conflicts in local feature files.
-3. Run `bun typecheck` from `packages/opencode`, `packages/core`, and `packages/tui`; fix anything broken before building.
-4. Bump `SYNCODE_VERSION` to a stamp that semver-compares ABOVE the latest upstream npm release.
-5. Build and install in one step: `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`
-6. Confirm: `~/.local/bin/opencode.exe --version` prints the new stamp.
+1. Branch `feature/<name>` or `fix/<name>` off `dev`, do the work, merge back to `dev`.
+2. Merge `dev` into `prod` only for a release/deploy.
+3. Build and install: `powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1`
+4. Confirm: `~/.local/bin/opencode.exe --version` prints the new stamp.
 
 ### Memory profiling
 
