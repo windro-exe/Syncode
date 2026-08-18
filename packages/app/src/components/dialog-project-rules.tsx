@@ -4,7 +4,7 @@ import { DividerV2 } from "@opencode-ai/ui/v2/divider-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { TextareaV2 } from "@opencode-ai/ui/v2/textarea-v2"
 import { Icon } from "@opencode-ai/ui/icon"
-import { createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useServerSDK } from "@/context/server-sdk"
@@ -14,11 +14,17 @@ import { displayName } from "@/pages/layout/helpers"
 import { persisted } from "@/utils/persist"
 
 const STARTER_RULES = [
-  { label: "⚡ Strict Types", rule: "Never use the `any` type in TypeScript — use explicit types or unknown with type narrowing." },
+  {
+    label: "⚡ Strict Types",
+    rule: "Never use the `any` type in TypeScript — use explicit types or unknown with type narrowing.",
+  },
   { label: "🧪 TDD Discipline", rule: "Write and execute unit tests before claiming a task or refactor is complete." },
   { label: "📦 Bun Runtime", rule: "Use bun/bun.cmd for scripts and running commands, never bare npm or npx." },
   { label: "🎯 Early Returns", rule: "Avoid nested if/else statements — prefer guard clauses and early returns." },
-  { label: "📝 Conventional Commits", rule: "Format git commits as type(scope): message using standard conventional commit style." },
+  {
+    label: "📝 Conventional Commits",
+    rule: "Format git commits as type(scope): message using standard conventional commit style.",
+  },
 ]
 
 export function DialogProjectRules(props: { project: LocalProject; server: ServerConnection.Any }) {
@@ -28,19 +34,12 @@ export function DialogProjectRules(props: { project: LocalProject; server: Serve
   const storageKey = createMemo(() => `project-rules:${props.project.worktree}`)
   const ideaStorageKey = createMemo(() => `project-idea:${props.project.worktree}`)
 
-  const [rulesStore, setRulesStore] = persisted(
-    storageKey(),
-    createStore<{ rules: string[] }>({ rules: [] })
-  )
+  // Legacy store: only used to migrate old rules into the workspace rules.md once.
+  const [rulesStore, setRulesStore] = persisted(storageKey(), createStore<{ rules: string[] }>({ rules: [] }))
 
-  const [ideaStore, setIdeaStore] = persisted(
-    ideaStorageKey(),
-    createStore<{ idea: string }>({ idea: "" })
-  )
+  const [ideaStore, setIdeaStore] = persisted(ideaStorageKey(), createStore<{ idea: string }>({ idea: "" }))
 
-  // File-backed rules come from the server (e.g. .syncode/rules/*.md, AGENTS.md).
-  // The server response already includes the UI store rules (ui.projectRules), so
-  // this list is the single source of truth for display.
+  // Rules come exclusively from the server (.syncode/rules/rules.md).
   const [serverRules, { refetch }] = createResource(
     () => [serverSDK().client, props.project.worktree] as const,
     async ([client, directory]) => {
@@ -60,9 +59,30 @@ export function DialogProjectRules(props: { project: LocalProject; server: Serve
       return true
     })
   })
-  const isStoreRule = (item: { rule: string; file: string }) => item.file === "ui.projectRules"
 
-  const removeFileRule = async (rule: string, filePath: string) => {
+  // One-time migration: legacy store rules move into rules.md, then the store clears.
+  createEffect(() => {
+    if (serverRules() === undefined) return
+    const legacy = rulesStore.rules ?? []
+    if (legacy.length === 0) return
+    const known = new Set((serverRules() ?? []).map((item) => item.rule))
+    const client = serverSDK().client
+    const directory = props.project.worktree
+    void (async () => {
+      for (const rule of legacy) {
+        if (known.has(rule)) continue
+        try {
+          await client.rules.add({ rule, directory })
+        } catch {
+          // ignore per-rule failures
+        }
+      }
+      setRulesStore("rules", [])
+      void refetch()
+    })()
+  })
+
+  const removeRule = async (rule: string, filePath: string) => {
     try {
       await serverSDK().client.rules.delete({ rule, filePath, directory: props.project.worktree })
     } catch {
@@ -72,34 +92,16 @@ export function DialogProjectRules(props: { project: LocalProject; server: Serve
   }
 
   const [draft, setDraft] = createSignal("")
-  const [editingIndex, setEditingIndex] = createSignal<number | null>(null)
 
-const addRule = (text?: string) => {
+  const addRule = async (text?: string) => {
     const value = (text ?? draft()).trim()
     if (!value) return
-    const current = rulesStore.rules ?? []
-    if (!current.includes(value)) {
-      setRulesStore("rules", [...current, value])
+    try {
+      await serverSDK().client.rules.add({ rule: value, directory: props.project.worktree })
+    } catch {
+      // fall through to refetch so the list reflects what the server actually has
     }
     setDraft("")
-    void refetch()
-  }
-
-  const editRule = (index: number, value: string) => {
-    const trimmed = value.trim()
-    const current = [...rulesStore.rules]
-    if (trimmed) {
-      current[index] = trimmed
-      setRulesStore("rules", current)
-    } else {
-      removeRule(index)
-    }
-    void refetch()
-  }
-
-  const removeRule = (index: number) => {
-    const current = rulesStore.rules.filter((_, i) => i !== index)
-    setRulesStore("rules", current)
     void refetch()
   }
 
@@ -109,9 +111,7 @@ const addRule = (text?: string) => {
         <DialogHeader>
           <div class="flex flex-col gap-1">
             <DialogTitle>Project Rules — {projectName()}</DialogTitle>
-            <span class="text-12-regular text-text-weak font-mono truncate max-w-md">
-              {props.project.worktree}
-            </span>
+            <span class="text-12-regular text-text-weak font-mono truncate max-w-md">{props.project.worktree}</span>
           </div>
         </DialogHeader>
         <DividerV2 />
@@ -123,7 +123,8 @@ const addRule = (text?: string) => {
             <div class="flex flex-col gap-0.5 text-12-regular text-text-weak">
               <span class="font-semibold text-text-base">Supreme Priority & Hard Constraints</span>
               <span>
-                Project rules are injected into every turn with top precedence over general defaults. Violations are treated as instruction failures.
+                Project rules are injected into every turn with top precedence over general defaults. Violations are
+                treated as instruction failures.
               </span>
             </div>
           </div>
@@ -148,7 +149,7 @@ const addRule = (text?: string) => {
 
           {/* Active Rules List */}
           <div class="flex flex-col gap-2.5">
-<div class="flex items-center justify-between">
+            <div class="flex items-center justify-between">
               <span class="text-13-medium text-text-base font-semibold">Active Standing Rules</span>
               <span class="text-11-regular text-text-weak">{rules().length} rules</span>
             </div>
@@ -163,35 +164,24 @@ const addRule = (text?: string) => {
             >
               <div class="flex flex-col gap-2 max-h-56 overflow-y-auto">
                 <For each={rules()}>
-                  {(item, index) => (
+                  {(item) => (
                     <div class="flex items-center gap-2 p-2 rounded bg-surface-base border border-border-base hover:border-border-hover group">
                       <span class="text-text-weak font-bold text-14 shrink-0">•</span>
-                      <Show when={!isStoreRule(item)}>
-                        <span class="px-1.5 py-0.5 text-10-medium rounded bg-surface-base border border-border-base text-text-weak shrink-0">
-                          {item.file}
-                        </span>
-                      </Show>
+                      <span class="px-1.5 py-0.5 text-10-medium rounded bg-surface-base border border-border-base text-text-weak shrink-0">
+                        {item.file}
+                      </span>
                       <input
                         type="text"
                         class="flex-1 bg-transparent text-12-regular text-text-base focus:outline-none"
                         value={item.rule}
-                        readOnly={!isStoreRule(item)}
-                        onBlur={(e) => {
-                          if (isStoreRule(item)) editRule(index(), e.currentTarget.value)
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.currentTarget.blur()
-                          }
-                        }}
+                        readOnly
                       />
                       <button
                         type="button"
                         class="text-text-weak hover:text-danger p-1 transition-colors shrink-0"
                         title="Remove rule"
                         onClick={() => {
-                          if (isStoreRule(item)) removeRule(index())
-                          else if (item.path) void removeFileRule(item.rule, item.path)
+                          if (item.path) void removeRule(item.rule, item.path)
                         }}
                       >
                         <Icon name="trash" />
@@ -224,9 +214,7 @@ const addRule = (text?: string) => {
 
           {/* Project Intent / Purpose (IDEA.md) */}
           <div class="flex flex-col gap-1.5 border-t border-border-base pt-4">
-            <span class="text-12-medium text-text-base font-semibold">
-              Project Purpose & Intent (IDEA.md)
-            </span>
+            <span class="text-12-medium text-text-base font-semibold">Project Purpose & Intent (IDEA.md)</span>
             <span class="text-11-regular text-text-weak">
               High-level vision or context that the AI cannot discover by reading code files alone.
             </span>

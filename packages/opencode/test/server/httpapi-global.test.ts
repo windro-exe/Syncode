@@ -18,6 +18,7 @@ import { schemaErrorLayer } from "../../src/server/routes/instance/httpapi/middl
 import { testEffect } from "../lib/effect"
 import { tmpdirScoped } from "../fixture/fixture"
 import path from "path"
+import os from "os"
 
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(RootHttpApi).pipe(
@@ -73,6 +74,29 @@ describe("global HttpApi", () => {
 
       expect(response.status).toBe(200)
       expect(Array.isArray(yield* response.json)).toBe(true)
+    }),
+  )
+
+  it.live("adds a rule to the global rules.md", () =>
+    Effect.gen(function* () {
+      const response = yield* HttpClientRequest.make("POST")(GlobalPaths.rules).pipe(
+        HttpClientRequest.setBody(HttpBody.jsonUnsafe({ rule: "always verify before claiming done" })),
+        HttpClient.execute,
+      )
+
+      expect(response.status).toBe(200)
+      const list = yield* response.json
+      expect(Array.isArray(list)).toBe(true)
+      expect((list as { rule: string }[]).some((item) => item.rule === "always verify before claiming done")).toBe(true)
+
+      // Clean up: never leave test rules in the real global rules.md.
+      const rulesPath = path.join(os.homedir(), ".syncode", "rules", "rules.md")
+      const text = yield* Effect.promise(() => Bun.file(rulesPath).text())
+      const cleaned = text
+        .split("\n")
+        .filter((line) => !line.includes("always verify before claiming done"))
+        .join("\n")
+      yield* Effect.promise(() => Bun.write(rulesPath, cleaned))
     }),
   )
 
