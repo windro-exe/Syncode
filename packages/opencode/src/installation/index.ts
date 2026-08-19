@@ -1,7 +1,7 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Effect, Layer, Schema, Context, Stream } from "effect"
+import { Effect, Layer, Schema, Context } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { withTransientReadRetry } from "@/util/effect-http-client"
@@ -9,6 +9,7 @@ import { errorMessage } from "@/util/error"
 import { ChildProcess } from "effect/unstable/process"
 import { AppProcess } from "@opencode-ai/core/process"
 import path from "path"
+import { chmodSync, existsSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { makeRuntime } from "@opencode-ai/core/effect/runtime"
 import semver from "semver"
 import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -61,7 +62,7 @@ export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedErr
 }
 
 // Response schemas for external version APIs
-const GitHubRelease = Schema.Struct({ tag_name: Schema.String })
+const DistVersion = Schema.Struct({ version: Schema.String })
 const NpmPackage = Schema.Struct({ version: Schema.String })
 const BrewFormula = Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) })
 const BrewInfoV2 = Schema.Struct({
@@ -71,6 +72,10 @@ const ChocoPackage = Schema.Struct({
   d: Schema.Struct({ results: Schema.Array(Schema.Struct({ Version: Schema.String })) }),
 })
 const ScoopManifest = NpmPackage
+
+// wnxd fork: the release feed is this fork's `dist` branch (version.json +
+// gzip-compressed prebuilt binaries), never upstream anomalyco releases.
+const DIST_BASE = "https://raw.githubusercontent.com/windro-exe/Syncode/dist"
 
 export interface Interface {
   readonly info: () => Effect.Effect<Info>
@@ -136,33 +141,24 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
       return `Upgrade failed for ${method}.`
     }
 
-    const upgradeScriptShell = Effect.fnUntraced(function* () {
-      const bashVersion = yield* text(["bash", "--version"])
-      if (bashVersion) return "bash"
-      return "sh"
-    })
+    const downloadDistAsset = Effect.fnUntraced(function* () {
+      const response = yield* httpOk.execute(HttpClientRequest.get(`${DIST_BASE}/${distAssetName()}`))
+      return new Uint8Array(yield* response.arrayBuffer)
+    }, Effect.mapError(() => new UpgradeFailedError({ stderr: upgradeFailure("curl") })))
 
-    const upgradeCurl = Effect.fnUntraced(
-      function* (target: string) {
-        const response = yield* httpOk.execute(HttpClientRequest.get("https://opencode.ai/install"))
-        const body = yield* response.text
-        const bodyBytes = new TextEncoder().encode(body)
-        const shell = yield* upgradeScriptShell()
-        const result = yield* appProcess.run(
-          ChildProcess.make(shell, [], {
-            stdin: Stream.make(bodyBytes),
-            env: { VERSION: target },
-            extendEnv: true,
-          }),
-        )
-        return {
-          code: result.exitCode,
-          stdout: result.stdout.toString("utf8"),
-          stderr: result.stderr.toString("utf8"),
-        }
-      },
-      Effect.mapError(() => new UpgradeFailedError({ stderr: upgradeFailure("curl") })),
-    )
+    const upgradeCurl = Effect.fnUntraced(function* () {
+      // wnxd fork: replace the binary in place from the fork's dist branch,
+      // keeping the previous binary as `.old` for rollback (mirrors install.ps1).
+      let binary: Uint8Array
+      try {
+        binary = gunzipBinary(yield* downloadDistAsset())
+      } catch {
+        return yield* new UpgradeFailedError({ stderr: upgradeFailure("curl") })
+      }
+      const refused = installBinary(binary)
+      if (refused) return yield* new UpgradeFailedError({ stderr: refused })
+      yield* text([process.execPath, "--version"])
+    })
 
     const result: Interface = {
       info: Effect.fn("Installation.info")(function* () {
@@ -255,18 +251,17 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
         }
 
         const response = yield* httpOk.execute(
-          HttpClientRequest.get("https://api.github.com/repos/anomalyco/opencode/releases/latest").pipe(
-            HttpClientRequest.acceptJson,
-          ),
+          HttpClientRequest.get(`${DIST_BASE}/version.json`).pipe(HttpClientRequest.acceptJson),
         )
-        const data = yield* HttpClientResponse.schemaBodyJson(GitHubRelease)(response)
-        return data.tag_name.replace(/^v/, "")
+        const data = yield* HttpClientResponse.schemaBodyJson(DistVersion)(response)
+        return data.version
       }, Effect.orDie),
       upgrade: Effect.fn("Installation.upgrade")(function* (m: Method, target: string) {
         let upgradeResult: { code: number; stdout: string; stderr: string } | undefined
         switch (m) {
           case "curl":
-            upgradeResult = yield* upgradeCurl(target)
+            // Raises a typed UpgradeFailedError on failure.
+            yield* upgradeCurl()
             break
           case "npm":
             upgradeResult = yield* run(["npm", "install", "-g", `opencode-ai@${target}`])
@@ -308,14 +303,14 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
           default:
             return yield* new UpgradeFailedError({ stderr: `Unknown installation method: ${m}` })
         }
-        if (!upgradeResult || upgradeResult.code !== 0) {
+        if (upgradeResult && upgradeResult.code !== 0) {
           return yield* new UpgradeFailedError({ stderr: upgradeFailure(m, upgradeResult) })
         }
         yield* Effect.logInfo("upgraded", {
           method: m,
           target,
-          stdout: upgradeResult.stdout,
-          stderr: upgradeResult.stderr,
+          stdout: upgradeResult?.stdout,
+          stderr: upgradeResult?.stderr,
         })
         yield* text([process.execPath, "--version"])
       }),
@@ -334,3 +329,44 @@ export const method = () => runPromise((s) => s.method())
 export const upgrade = (...args: Parameters<Interface["upgrade"]>) => runPromise((s) => s.upgrade(...args))
 
 export * as Installation from "."
+
+// The dist branch ships one gzip-compressed prebuilt binary per platform.
+export function distAssetName() {
+  const platform = process.platform
+  const arch = process.arch === "arm64" ? "arm64" : "x64"
+  if (platform === "win32") return `opencode-windows-${arch}.exe.gz`
+  if (platform === "darwin") return `opencode-darwin-${arch}.gz`
+  if (platform === "linux") return `opencode-linux-${arch}.gz`
+  throw new Error(`no dist asset for ${platform}/${arch}`)
+}
+
+// Decompress and sanity-check the payload before it can touch the installed
+// binary. Windows executables start with the MZ magic.
+export function gunzipBinary(raw: Uint8Array) {
+  const binary = Bun.gunzipSync(Uint8Array.from(raw))
+  if (process.platform === "win32" && (binary[0] !== 0x4d || binary[1] !== 0x5a))
+    throw new Error("downloaded binary is not a Windows executable")
+  return binary
+}
+
+// Replace process.execPath with the new binary, keeping the previous one as
+// `.old`. Refuses anything that is not a fork-managed opencode install so the
+// updater can never clobber another binary (e.g. bun under tests).
+export function installBinary(binary: Uint8Array) {
+  const exec = process.execPath
+  const expected = process.platform === "win32" ? "opencode.exe" : "opencode"
+  if (!exec.toLowerCase().endsWith(expected.toLowerCase()))
+    return `refusing to replace ${exec}: not a fork-managed opencode binary`
+  const tmp = `${exec}.tmp-${process.pid}`
+  const backup = `${exec}.old`
+  try {
+    writeFileSync(tmp, binary)
+    if (process.platform !== "win32") chmodSync(tmp, 0o755)
+    if (existsSync(backup)) rmSync(backup)
+    if (existsSync(exec)) renameSync(exec, backup)
+    renameSync(tmp, exec)
+  } catch (error) {
+    rmSync(tmp, { force: true })
+    return `Upgrade failed: ${errorMessage(error)}`
+  }
+}
