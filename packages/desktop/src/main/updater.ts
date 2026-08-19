@@ -14,7 +14,9 @@ export function setupAutoUpdater(stop: () => Promise<void>) {
   const logger = getLogger()
   autoUpdater.logger = logger
   autoUpdater.channel = "latest"
-  autoUpdater.allowPrerelease = false
+  // wnxd fork: releases are tagged vX.Y.Z-wnxd-vN, which semver treats as
+  // prereleases — they must be allowed or the fork feed would never be seen.
+  autoUpdater.allowPrerelease = true
   autoUpdater.allowDowngrade = true
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false

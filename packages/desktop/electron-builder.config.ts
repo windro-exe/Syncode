@@ -170,9 +170,9 @@ function getConfig() {
         appId,
         productName: CHANNEL_NAMES[channel].productName,
         protocols: { name: "OpenCode", schemes: ["opencode"] },
-        // wnxd fork: no `publish` feed — local fork must never auto-update from
-        // upstream anomalyco releases (would wipe local features). Updater is
-        // also hard-disabled in src/main/constants.ts.
+        // wnxd fork: updates come from this fork's GitHub releases
+        // (syncode-release.yml publishes installers + latest.yml on tag push).
+        publish: [{ provider: "github", owner: "windro-exe", repo: "Syncode" }],
         deb: { fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
         rpm: { packageName: "opencode", fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
       }
