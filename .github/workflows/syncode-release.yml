@@ -2,20 +2,72 @@
 #
 # READY FOR THE FUTURE CI ACCOUNT. Actions are currently DISABLED on this repo,
 # so this does not run. When you move to an account with Actions credits, enable
-# Actions and push a tag like `v1.16.13-wnxd` to build + publish installers for
-# every OS. Refine signing/notarization as needed before relying on it.
+# Actions and the flow becomes: merge dev into prod -> this workflow bumps the
+# version stamp, tags, builds every OS, publishes the GitHub Release (desktop
+# updater feed) and updates the dist branch (CLI/TUI updater feed). Tag pushes
+# (v*) and manual dispatch work the same way.
+# Refine signing/notarization as needed before relying on it.
 name: syncode-release
 
 on:
   push:
+    branches: [prod]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Override release version (e.g. 1.19.0-wnxd-v3)"
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    # Loop guard: the bump commit this workflow pushes to prod must not
+    # re-trigger the pipeline. Tag pushes and manual dispatch always run.
+    if: "${{ github.ref_type == 'tag' || !contains(github.event.head_commit.message, 'release: ') }}"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Resolve version
+        id: resolve
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$DISPATCH_VERSION" ]; then
+            VERSION="$DISPATCH_VERSION"
+          elif [[ "$REF_NAME" == v* ]]; then
+            VERSION="${REF_NAME#v}"
+          else
+            STAMP=$(cat SYNCODE_VERSION)
+            VERSION=$(printf '%s' "$STAMP" | sed -E 's/-v([0-9]+)$/-v$((\1 + 1))/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "resolved version: $VERSION"
+      - name: Bump stamp and tag (branch pushes only)
+        if: ${{ github.ref_name == 'prod' }}
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          git config user.name "syncode-release"
+          git config user.email "release@windro-exe.users.github.com"
+          printf '%s' "$VERSION" > SYNCODE_VERSION
+          git add SYNCODE_VERSION
+          git commit -m "release: $VERSION"
+          git tag "v$VERSION"
+          git push origin prod "v$VERSION"
+
   build:
+    needs: version
+    if: ${{ needs.version.outputs.version != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +79,8 @@ jobs:
           - os: windows-latest
             label: windows
     runs-on: ${{ matrix.os }}
+    env:
+      OPENCODE_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -35,21 +89,32 @@ jobs:
       - name: Install deps
         run: bun install
       - name: Build CLI (all targets)
-        env:
-          OPENCODE_VERSION: ${{ github.ref_name }}
         run: bun run build
         working-directory: packages/opencode
       - name: Build desktop installer (${{ matrix.label }})
         env:
-          OPENCODE_VERSION: ${{ github.ref_name }}
           OPENCODE_CHANNEL: prod
         run: |
           bun run build
           bunx electron-builder --${{ matrix.label == 'macos' && 'mac' || matrix.label == 'windows' && 'win' || 'linux' }} --config electron-builder.config.ts
         working-directory: packages/desktop
+      - name: Gzip CLI binaries for the dist feed
+        run: |
+          mkdir -p dist-assets
+          for bin in packages/opencode/dist/opencode-*/bin/opencode*; do
+            [ -f "$bin" ] || continue
+            base=$(basename "$bin")
+            tar -czf "dist-assets/${base}.gz" -C "$(dirname "$bin")" "$base"
+          done
+          ls -la dist-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-assets-${{ matrix.label }}
+          path: dist-assets/
       - name: Publish to Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.version.outputs.version }}
           files: |
             packages/opencode/dist/opencode-*/bin/opencode*
             packages/desktop/dist/*.exe
@@ -59,3 +124,29 @@ jobs:
             packages/desktop/dist/*.deb
             packages/desktop/dist/*.rpm
             packages/desktop/dist/latest*.yml
+
+  publish-dist:
+    needs: [version, build]
+    if: ${{ needs.version.outputs.version != '' && !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-assets-*
+          merge-multiple: true
+          path: dist-assets
+      - name: Commit binaries + version.json to dist
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          git config user.name "syncode-release"
+          git config user.email "release@windro-exe.users.github.com"
+          cp -f dist-assets/*.gz .
+          printf '{\n  "version": "%s",\n  "date": "%s",\n  "branch": "dist"\n}\n' \
+            "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > version.json
+          git add -A
+          git commit -m "release: $VERSION" || echo "nothing to commit"
+          git push origin HEAD:dist
