@@ -346,7 +346,10 @@ function normalizeMessages(
             ...msg.providerOptions,
             openaiCompatible: {
               ...msg.providerOptions?.openaiCompatible,
-              ...(reasoningText ? { [field]: reasoningText } : {}),
+              // reasoning_content families (deepseek, qwen, kimi, ...) reject a
+              // later request whose assistant messages drop the field — empty
+              // included — while thinking mode is active.
+              ...(field === "reasoning_content" || reasoningText ? { [field]: reasoningText } : {}),
             },
           },
         }
