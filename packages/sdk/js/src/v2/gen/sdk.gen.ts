@@ -86,6 +86,8 @@ import type {
   GlobalEventResponses,
   GlobalHealthErrors,
   GlobalHealthResponses,
+  GlobalRulesAddErrors,
+  GlobalRulesAddResponses,
   GlobalRulesDeleteErrors,
   GlobalRulesDeleteResponses,
   GlobalRulesErrors,
@@ -179,6 +181,8 @@ import type {
   QuestionReplyErrors,
   QuestionReplyResponses,
   QuestionV2Reply,
+  RulesAddErrors,
+  RulesAddResponses,
   RulesDeleteErrors,
   RulesDeleteResponses,
   RulesListErrors,
@@ -1358,6 +1362,30 @@ export class Rules extends HeyApiClient {
       },
     })
   }
+
+  /**
+   * Add a global rule
+   *
+   * Append a global operational rule to rules.md.
+   */
+  public add<ThrowOnError extends boolean = false>(
+    parameters?: {
+      rule?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "rule" }] }])
+    return (options?.client ?? this.client).post<GlobalRulesAddResponses, GlobalRulesAddErrors, ThrowOnError>({
+      url: "/global/rules",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
 }
 
 export class Global extends HeyApiClient {
@@ -2381,6 +2409,43 @@ export class Rules2 extends HeyApiClient {
       url: "/rules",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Add a project rule
+   *
+   * Append a project operational rule to the workspace rules.md.
+   */
+  public add<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      rule?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "rule" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<RulesAddResponses, RulesAddErrors, ThrowOnError>({
+      url: "/rules",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }

@@ -43,12 +43,18 @@ function isAlwaysOn(frontmatter: string): boolean {
 export function parseRulesFromMarkdown(content: string): string[] {
   const { body, frontmatter } = splitFrontmatter(content)
   if (!isAlwaysOn(frontmatter)) return []
-  return body
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.replace(/^[-*]\s+/, ""))
-    .filter((line) => line.length > 0 && !line.startsWith("#"))
+  return (
+    body
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      // Only bullet list items count as rules. Prose, numbered lists, code blocks,
+      // and tables in a .md file are documentation, not operational rules — without
+      // this, document files like AGENTS.md would dump every line into the UI.
+      .filter((line) => /^[-*]\s+/.test(line))
+      .map((line) => line.replace(/^[-*]\s+/, ""))
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+  )
 }
 
 export function serializeRulesToMarkdown(rules: string[], frontmatter = ""): string {
@@ -61,14 +67,12 @@ export function serializeRulesToMarkdown(rules: string[], frontmatter = ""): str
   return `${header}${body}\n`
 }
 
-const PROJECT_RULE_DIRS = [".syncode/rules", ".opencode/rules", ".hermes/rules"]
-const GLOBAL_RULE_DIRS = [
-  path.join(os.homedir(), ".config", "opencode", "rules"),
-  path.join(os.homedir(), ".syncode", "rules"),
-]
-if (process.env.APPDATA) {
-  GLOBAL_RULE_DIRS.push(path.join(process.env.APPDATA, "opencode", "rules"))
-}
+// Rules live in exactly one file per scope: rules.md. No other files are read
+// or written — AGENTS.md/CONTEXT.md are instructions (injected by
+// instruction.ts), and store/JSON sources are gone.
+const PROJECT_RULE_DIR = ".syncode/rules"
+const PROJECT_RULE_FILE = "rules.md"
+const GLOBAL_RULE_FILE = path.join(os.homedir(), ".syncode", "rules", "rules.md")
 
 const DEFAULT_PROJECT_MARKER_KEY = "default-project.v1"
 
@@ -106,91 +110,130 @@ export function defaultProjectDirectory(): string | undefined {
 
 export function loadProjectRules(cwd: string): RuleFile[] {
   if (cwd && cwd === defaultProjectDirectory()) return []
-  return collectDirectoryRules(cwd)
+  migrateProjectLegacy(cwd)
+  const filePath = path.join(cwd, PROJECT_RULE_DIR, PROJECT_RULE_FILE)
+  return readRuleFile(filePath)
 }
 
-function collectDirectoryRules(cwd: string): RuleFile[] {
-  const results: RuleFile[] = []
-  if (!cwd || !fs.existsSync(cwd)) return results
+// ---------------------------------------------------------------------------
+// One-time migration from the old multi-file/multi-source layout into rules.md.
+// Any rules found in legacy files are merged into rules.md (deduped) and the
+// legacy files are deleted — rules.md is the only source from now on.
+// ---------------------------------------------------------------------------
 
-  for (const relDir of PROJECT_RULE_DIRS) {
+function readIfExists(filePath: string): string {
+  try {
+    return fs.readFileSync(filePath, "utf8")
+  } catch {
+    return ""
+  }
+}
+
+function mergeInto(filePath: string, rules: string[]) {
+  if (rules.length === 0) return
+  const existing = new Set(parseRulesFromMarkdown(readIfExists(filePath)))
+  const added = rules.filter((rule) => !existing.has(rule))
+  if (added.length === 0) return
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  const merged = [...existing, ...added]
+  fs.writeFileSync(filePath, serializeRulesToMarkdown(merged), "utf8")
+}
+
+const LEGACY_GLOBAL_RULE_DIRS = [
+  path.join(os.homedir(), ".config", "opencode", "rules"),
+  path.join(os.homedir(), ".syncode", "rules"),
+]
+if (process.env.APPDATA) {
+  LEGACY_GLOBAL_RULE_DIRS.push(path.join(process.env.APPDATA, "opencode", "rules"))
+}
+
+let globalLegacyMigrated = false
+
+function migrateProjectLegacy(cwd: string) {
+  const targets: { dir: string; rules: string[]; filePath: string }[] = []
+  for (const relDir of [PROJECT_RULE_DIR, ".opencode/rules", ".hermes/rules"]) {
     const dir = path.join(cwd, relDir)
-    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-      try {
-        const files = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".md"))
-        for (const file of files) {
-          const filePath = path.join(dir, file)
-          try {
-            const raw = fs.readFileSync(filePath, "utf8")
-            const { frontmatter } = splitFrontmatter(raw)
-            const enabled = isAlwaysOn(frontmatter)
-            const rules = parseRulesFromMarkdown(raw)
-            results.push({
-              name: file,
-              path: filePath,
-              rules,
-              enabled,
-            })
-          } catch {
-            // Ignore single unreadable file
-          }
-        }
-      } catch {
-        // Ignore directory read error
-      }
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.toLowerCase().endsWith(".md") || file.toLowerCase() === PROJECT_RULE_FILE) continue
+      const filePath = path.join(dir, file)
+      targets.push({ dir, rules: parseRulesFromMarkdown(readIfExists(filePath)), filePath })
     }
   }
-
-  // Also check AGENTS.md at project root if present
-  const agentsFile = path.join(cwd, "AGENTS.md")
-  if (fs.existsSync(agentsFile) && fs.statSync(agentsFile).isFile()) {
+  if (targets.length === 0) return
+  const targetFile = path.join(cwd, PROJECT_RULE_DIR, PROJECT_RULE_FILE)
+  const merged = targets.flatMap((t) => t.rules)
+  mergeInto(targetFile, merged)
+  for (const t of targets) {
     try {
-      const raw = fs.readFileSync(agentsFile, "utf8")
-      const rules = parseRulesFromMarkdown(raw)
-      if (rules.length > 0) {
-        results.push({
-          name: "AGENTS.md",
-          path: agentsFile,
-          rules,
-          enabled: true,
-        })
+      fs.unlinkSync(t.filePath)
+    } catch {
+      // Ignore
+    }
+  }
+}
+
+function migrateGlobalLegacy() {
+  if (globalLegacyMigrated) return
+  globalLegacyMigrated = true
+
+  const merged: string[] = []
+  const removals: string[] = []
+  for (const dir of LEGACY_GLOBAL_RULE_DIRS) {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.toLowerCase().endsWith(".md") || file.toLowerCase() === PROJECT_RULE_FILE) continue
+      const filePath = path.join(dir, file)
+      merged.push(...parseRulesFromMarkdown(readIfExists(filePath)))
+      removals.push(filePath)
+    }
+  }
+  for (const jsonPath of [
+    path.join(os.homedir(), ".config", "opencode", "global_rules.json"),
+    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode", "global_rules.json") : null,
+  ].filter(Boolean) as string[]) {
+    if (!fs.existsSync(jsonPath)) continue
+    try {
+      const parsed = JSON.parse(readIfExists(jsonPath))
+      if (Array.isArray(parsed)) {
+        merged.push(...parsed.filter((item) => item && typeof item.rule === "string").map((item) => item.rule))
       }
+      removals.push(jsonPath)
+    } catch {
+      // Ignore unreadable json
+    }
+  }
+  mergeInto(GLOBAL_RULE_FILE, merged)
+  for (const filePath of removals) {
+    try {
+      fs.unlinkSync(filePath)
     } catch {
       // Ignore
     }
   }
 
-// Also check desktop default.dat store files for UI project rules (project-rules:<cwd>)
-  for (const datDir of desktopStoreDirs()) {
-    const datPath = path.join(datDir, "default.dat")
-    if (fs.existsSync(datPath)) {
-      try {
-        const raw = fs.readFileSync(datPath, "utf8")
-        const parsed = JSON.parse(raw)
-        const key1 = `project-rules:${cwd}`
-        const key2 = `project-rules:${cwd.replace(/\\/g, "/")}`
-        const rulesJson = parsed[key1] || parsed[key2]
-        if (rulesJson) {
-          const val = typeof rulesJson === "string" ? JSON.parse(rulesJson) : rulesJson
-          if (val && Array.isArray(val.rules)) {
-            const rules = val.rules.map((r: any) => String(r).trim()).filter(Boolean)
-            if (rules.length > 0) {
-              results.push({
-                name: "ui.projectRules",
-                path: datPath,
-                rules,
-                enabled: true,
-              })
-            }
-          }
-        }
-      } catch {
-        // Ignore
-      }
-    }
-  }
+  const defaultDir = defaultProjectDirectory()
+  if (defaultDir) migrateProjectLegacy(defaultDir)
+}
 
-  return results
+function readRuleFile(filePath: string): RuleFile[] {
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return []
+  try {
+    const raw = fs.readFileSync(filePath, "utf8")
+    const { frontmatter } = splitFrontmatter(raw)
+    const rules = parseRulesFromMarkdown(raw)
+    if (rules.length === 0) return []
+    return [
+      {
+        name: PROJECT_RULE_FILE,
+        path: filePath,
+        rules,
+        enabled: isAlwaysOn(frontmatter),
+      },
+    ]
+  } catch {
+    return []
+  }
 }
 
 export function loadProjectIdea(cwd: string): string | undefined {
@@ -229,106 +272,18 @@ export function loadProjectIdea(cwd: string): string | undefined {
 }
 
 export function loadGlobalRules(): RuleFile[] {
-  const results: RuleFile[] = []
+  migrateGlobalLegacy()
+  const results = readRuleFile(GLOBAL_RULE_FILE)
 
-  for (const dir of GLOBAL_RULE_DIRS) {
-    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-      try {
-        const files = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".md"))
-        for (const file of files) {
-          const filePath = path.join(dir, file)
-          try {
-            const raw = fs.readFileSync(filePath, "utf8")
-            const { frontmatter } = splitFrontmatter(raw)
-            const enabled = isAlwaysOn(frontmatter)
-            const rules = parseRulesFromMarkdown(raw)
-            results.push({
-              name: file,
-              path: filePath,
-              rules,
-              enabled,
-            })
-          } catch {
-            // Ignore
-          }
-        }
-      } catch {
-        // Ignore
-      }
-    }
-  }
-
-// Also check desktop default.dat store files if present
-  for (const datDir of desktopStoreDirs()) {
-    const datPath = path.join(datDir, "default.dat")
-    if (fs.existsSync(datPath)) {
-      try {
-        const raw = fs.readFileSync(datPath, "utf8")
-        const parsed = JSON.parse(raw)
-        if (parsed && typeof parsed["settings.v3"] === "string") {
-          const settings = JSON.parse(parsed["settings.v3"])
-          if (Array.isArray(settings.globalRules)) {
-            const rules = settings.globalRules
-              .filter((item: any) => item && typeof item.rule === "string" && item.enabled !== false)
-              .map((item: any) => item.rule as string)
-            if (rules.length > 0) {
-              results.push({
-                name: "settings.globalRules",
-                path: datPath,
-                rules,
-                enabled: true,
-              })
-            }
-          }
-        }
-      } catch {
-        // Ignore
-      }
-    }
-  }
-
-  // The default project is not a project — its rules (files and UI store) are
-  // global rules. Collect them through the same directory walker used for
-  // projects, then re-label them as default-project sources.
+  // The default project is not a project — its rules.md is a global rules file.
   const defaultDir = defaultProjectDirectory()
   if (defaultDir) {
-    for (const file of collectDirectoryRules(defaultDir)) {
+    const defaultFile = path.join(defaultDir, PROJECT_RULE_DIR, PROJECT_RULE_FILE)
+    for (const file of readRuleFile(defaultFile)) {
       results.push({
+        ...file,
         name: `default:${file.name}`,
-        path: file.path,
-        rules: file.rules,
-        enabled: file.enabled,
       })
-    }
-  }
-
-  // Also check JSON configs if present
-  const jsonPaths = [
-    path.join(os.homedir(), ".config", "opencode", "global_rules.json"),
-    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode", "global_rules.json") : null,
-  ].filter(Boolean) as string[]
-
-  for (const jsonPath of jsonPaths) {
-    if (fs.existsSync(jsonPath)) {
-      try {
-        const raw = fs.readFileSync(jsonPath, "utf8")
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed)) {
-          const rules = parsed
-            .filter((item) => item && typeof item.rule === "string" && item.enabled !== false)
-            .map((item) => item.rule as string)
-          if (rules.length > 0) {
-            results.push({
-              name: "global_rules.json",
-              path: jsonPath,
-              rules,
-              enabled: true,
-            })
-          }
-        }
-      } catch {
-        // Ignore
-      }
     }
   }
 
@@ -395,29 +350,23 @@ export function formatRulesSystemPrompt(opts: {
   return sections.join("\n")
 }
 
-export function addRule(opts: {
-  scope: "project" | "global"
+export function addRule(opts: { scope: "project" | "global"; rule: string; cwd?: string }): {
+  success: boolean
+  filePath: string
   rule: string
-  cwd?: string
-  file?: string
-}): { success: boolean; filePath: string; rule: string } {
+} {
   const cleanRule = opts.rule.trim()
   if (!cleanRule) throw new Error("Rule content cannot be empty")
 
-  let targetDir = ""
   let targetFile = ""
-
   if (opts.scope === "project") {
     const cwd = opts.cwd || process.cwd()
-    targetDir = path.join(cwd, ".syncode", "rules")
-    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "project.md"
-    targetFile = path.join(targetDir, fileName)
+    targetFile = path.join(cwd, PROJECT_RULE_DIR, PROJECT_RULE_FILE)
   } else {
-    targetDir = path.join(os.homedir(), ".syncode", "rules")
-    const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "global.md"
-    targetFile = path.join(targetDir, fileName)
+    targetFile = GLOBAL_RULE_FILE
   }
 
+  const targetDir = path.dirname(targetFile)
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true })
   }
@@ -444,27 +393,20 @@ export function addRule(opts: {
   return { success: true, filePath: targetFile, rule: cleanRule }
 }
 
-export function removeRule(opts: {
-  scope: "project" | "global"
-  rule: string
-  cwd?: string
-  file?: string
-  filePath?: string
-}): { success: boolean; filePath: string; remainingCount: number } {
+export function removeRule(opts: { scope: "project" | "global"; rule: string; cwd?: string; filePath?: string }): {
+  success: boolean
+  filePath: string
+  remainingCount: number
+} {
   const cleanRule = opts.rule.trim()
   let targetFile = opts.filePath
 
   if (!targetFile) {
-    let targetDir = ""
     if (opts.scope === "project") {
       const cwd = opts.cwd || process.cwd()
-      targetDir = path.join(cwd, ".syncode", "rules")
-      const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "project.md"
-      targetFile = path.join(targetDir, fileName)
+      targetFile = path.join(cwd, PROJECT_RULE_DIR, PROJECT_RULE_FILE)
     } else {
-      targetDir = path.join(os.homedir(), ".syncode", "rules")
-      const fileName = opts.file ? (opts.file.endsWith(".md") ? opts.file : `${opts.file}.md`) : "global.md"
-      targetFile = path.join(targetDir, fileName)
+      targetFile = GLOBAL_RULE_FILE
     }
   }
 
@@ -482,4 +424,3 @@ export function removeRule(opts: {
 
   return { success: true, filePath: targetFile, remainingCount: filtered.length }
 }
-

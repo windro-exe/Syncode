@@ -1,20 +1,43 @@
-import { Component, createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { Component, createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
-import { Switch } from "@opencode-ai/ui/v2/switch-v2"
 import { Icon } from "@opencode-ai/ui/icon"
-import { useSettings, type GlobalRuleSetting } from "@/context/settings"
+import { useSettings } from "@/context/settings"
 import { useServerSDK } from "@/context/server-sdk"
 import { SettingsListV2 } from "./parts/list"
 import "./settings-v2.css"
 
 const RULE_PRESETS: Array<{ label: string; rule: string; category: string }> = [
-  { label: "⚡ No `any` Type", rule: "Never use the `any` type in TypeScript — always use strict types or unknown with type narrowing.", category: "TypeScript" },
-  { label: "🛡️ Effect / No Try-Catch", rule: "Avoid try/catch wrappers where possible; prefer Effect/Option/Result pipelines or early returns.", category: "Architecture" },
-  { label: "🧪 Strict TDD", rule: "Write tests before implementation and run the test suite before claiming completion.", category: "Testing" },
-  { label: "📦 Bun Execution", rule: "Use bun/bun.cmd for scripts and commands, never bare npm or npx shims.", category: "Environment" },
-  { label: "📝 Conventional Commits", rule: "Format git commits as type(scope): message using conventional commits style.", category: "Git" },
-  { label: "🎯 Minimal Variables", rule: "Do not extract single-use variables or helpers preemptively; inline logic cleanly.", category: "Simplicity" },
+  {
+    label: "⚡ No `any` Type",
+    rule: "Never use the `any` type in TypeScript — always use strict types or unknown with type narrowing.",
+    category: "TypeScript",
+  },
+  {
+    label: "🛡️ Effect / No Try-Catch",
+    rule: "Avoid try/catch wrappers where possible; prefer Effect/Option/Result pipelines or early returns.",
+    category: "Architecture",
+  },
+  {
+    label: "🧪 Strict TDD",
+    rule: "Write tests before implementation and run the test suite before claiming completion.",
+    category: "Testing",
+  },
+  {
+    label: "📦 Bun Execution",
+    rule: "Use bun/bun.cmd for scripts and commands, never bare npm or npx shims.",
+    category: "Environment",
+  },
+  {
+    label: "📝 Conventional Commits",
+    rule: "Format git commits as type(scope): message using conventional commits style.",
+    category: "Git",
+  },
+  {
+    label: "🎯 Minimal Variables",
+    rule: "Do not extract single-use variables or helpers preemptively; inline logic cleanly.",
+    category: "Simplicity",
+  },
 ]
 
 export const SettingsRulesV2: Component = () => {
@@ -22,28 +45,43 @@ export const SettingsRulesV2: Component = () => {
   const serverSDK = useServerSDK()
 
   const [draft, setDraft] = createSignal("")
-  const [draftCategory, setDraftCategory] = createSignal("General")
 
-const [serverRules, { refetch }] = createResource(
+  const [serverRules, { refetch }] = createResource(
     () => serverSDK().client,
     async (client) => (await client.global.rules()).data ?? [],
   )
-  const rules = createMemo(() => {
-    const local = settings.globalRules.list().map((rule) => ({ ...rule, source: "settings" as const }))
-    const localRules = new Set(local.map((rule) => rule.rule))
-    const external = (serverRules() ?? [])
-      .filter((rule) => !localRules.has(rule.rule))
-      .map((rule) => ({
-        id: `file:${rule.file}:${rule.rule}`,
-        rule: rule.rule,
-        category: rule.file,
-        enabled: rule.enabled,
-        filePath: rule.path,
-        source: "file" as const,
-      }))
-    return [...local, ...external]
-  })
+  const rules = createMemo(() =>
+    (serverRules() ?? []).map((rule) => ({
+      id: `file:${rule.file}:${rule.rule}`,
+      rule: rule.rule,
+      category: rule.file,
+      enabled: rule.enabled,
+      filePath: rule.path,
+    })),
+  )
   const activeCount = createMemo(() => rules().filter((r) => r.enabled).length)
+
+  // One-time migration: rules that were stored in the settings store (default.dat)
+  // move into the global rules.md, then the store is cleared.
+  const migrateLegacy = async () => {
+    const legacy = settings.globalRules.list()
+    if (legacy.length === 0) return
+    const known = new Set((serverRules() ?? []).map((rule) => rule.rule))
+    const client = serverSDK().client
+    for (const item of legacy) {
+      if (known.has(item.rule)) continue
+      try {
+        await client.global.rules2.add({ rule: item.rule })
+      } catch {
+        // ignore per-rule failures; refetch below reflects the server state
+      }
+    }
+    settings.globalRules.set([])
+    void refetch()
+  }
+  createEffect(() => {
+    if (serverRules() !== undefined) void migrateLegacy()
+  })
 
   const removeFileRule = async (rule: string, filePath: string) => {
     try {
@@ -54,15 +92,16 @@ const [serverRules, { refetch }] = createResource(
     void refetch()
   }
 
-  const addRule = (text?: string, category?: string) => {
+  const addRule = async (text?: string) => {
     const ruleText = (text ?? draft()).trim()
     if (!ruleText) return
-    settings.globalRules.add({
-      rule: ruleText,
-      category: (category ?? draftCategory().trim()) || "General",
-      enabled: true,
-    })
+    try {
+      await serverSDK().client.global.rules2.add({ rule: ruleText })
+    } catch {
+      // fall through to refetch so the list reflects what the server actually has
+    }
     setDraft("")
+    void refetch()
   }
 
   return (
@@ -87,7 +126,8 @@ const [serverRules, { refetch }] = createResource(
           <div class="flex flex-col gap-1 text-12-regular text-text-weak">
             <span class="text-13-medium text-text-base font-semibold">Priority & Consequence Enforcement</span>
             <span>
-              Every rule is sent to the model with supreme priority. Violations are treated as instruction failures, and the model is mandated to verify all actions against these rules.
+              Every rule is sent to the model with supreme priority. Violations are treated as instruction failures, and
+              the model is mandated to verify all actions against these rules.
             </span>
           </div>
         </div>
@@ -101,7 +141,7 @@ const [serverRules, { refetch }] = createResource(
                 <button
                   type="button"
                   class="px-3 py-1.5 text-12-regular rounded bg-surface-base hover:bg-surface-hover border border-border-base text-text-base transition-colors flex items-center gap-1.5"
-                  onClick={() => addRule(preset.rule, preset.category)}
+                  onClick={() => addRule(preset.rule)}
                 >
                   <span>{preset.label}</span>
                 </button>
@@ -136,11 +176,15 @@ const [serverRules, { refetch }] = createResource(
         <div class="grid grid-cols-2 gap-4">
           <div class="p-4 rounded-lg bg-surface-base border border-border-base flex flex-col gap-1">
             <span class="text-11-medium text-text-weak uppercase tracking-wider">Active Global Rules</span>
-            <span class="text-20-semibold text-text-base">{activeCount()} / {rules().length}</span>
+            <span class="text-20-semibold text-text-base">
+              {activeCount()} / {rules().length}
+            </span>
           </div>
           <div class="p-4 rounded-lg bg-surface-base border border-border-base flex flex-col gap-1">
             <span class="text-11-medium text-text-weak uppercase tracking-wider">Precedence Hierarchy</span>
-            <span class="text-12-regular text-text-weak">Project Rules &gt; Global Rules &gt; Persona &gt; Defaults</span>
+            <span class="text-12-regular text-text-weak">
+              Project Rules &gt; Global Rules &gt; Persona &gt; Defaults
+            </span>
           </div>
         </div>
 
@@ -166,29 +210,16 @@ const [serverRules, { refetch }] = createResource(
                       type="text"
                       class="w-full bg-transparent text-13-regular text-text-base focus:outline-none"
                       value={item.rule}
-                       readOnly={item.source === "file"}
-                       onBlur={(e) => {
-                         if (item.source === "settings") {
-                           settings.globalRules.update(item.id, { rule: e.currentTarget.value.trim() || item.rule })
-                         }
-                       }}
+                      readOnly
                     />
                   </div>
 
                   <div class="flex items-center gap-3 shrink-0">
-                    <Switch
-                      checked={item.enabled}
-                      disabled={item.source === "file"}
-                      onChange={() => {
-                        if (item.source === "settings") settings.globalRules.toggle(item.id)
-                      }}
-                    />
-<ButtonV2
+                    <ButtonV2
                       variant="outline"
                       size="small"
                       onClick={() => {
-                        if (item.source === "settings") settings.globalRules.remove(item.id)
-                        else if (item.source === "file" && item.filePath) void removeFileRule(item.rule, item.filePath)
+                        if (item.filePath) void removeFileRule(item.rule, item.filePath)
                       }}
                     >
                       <Icon name="trash" />

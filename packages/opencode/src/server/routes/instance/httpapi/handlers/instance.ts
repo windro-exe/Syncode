@@ -6,7 +6,7 @@ import { Global } from "@opencode-ai/core/global"
 import { LSP } from "@/lsp/lsp"
 import { Vcs } from "@/project/vcs"
 import { Skill } from "@/skill"
-import { loadProjectRules, removeRule } from "@/session/rules"
+import { loadProjectRules, removeRule, addRule } from "@/session/rules"
 import { Effect } from "effect"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
@@ -106,8 +106,21 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       )
     })
 
+    const rulesAdd = Effect.fn("InstanceHttpApi.rulesAdd")(function* (ctx: { payload: { rule: string } }) {
+      const inst = yield* InstanceState.context
+      addRule({ scope: "project", rule: ctx.payload.rule, cwd: inst.directory })
+      return loadProjectRules(inst.directory).flatMap((file) =>
+        file.rules.map((rule) => ({
+          rule,
+          file: file.name,
+          path: file.path,
+          enabled: file.enabled,
+        })),
+      )
+    })
+
     const rulesDelete = Effect.fn("InstanceHttpApi.rulesDelete")(function* (ctx: {
-      payload: { rule: string; filePath: string }
+      payload: { rule: string; filePath?: string }
     }) {
       const inst = yield* InstanceState.context
       const result = removeRule({
@@ -134,6 +147,7 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       .handle("lsp", getLsp)
       .handle("formatter", getFormatter)
       .handle("rules", getRules)
+      .handle("rulesAdd", rulesAdd)
       .handle("rulesDelete", rulesDelete)
   }),
 )

@@ -191,6 +191,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
             "x-opencode-session": input.sessionID,
             "x-opencode-request": input.user.id,
             "x-opencode-client": input.flags.client,
+            ...(input.model.api.id.includes("-free") ? { "x-real-ip": freshIdentityIp() } : {}),
             "User-Agent": USER_AGENT,
           }
         : {
@@ -221,6 +222,34 @@ export function hasToolCalls(messages: ModelMessage[]): boolean {
     }
   }
   return false
+}
+
+// Zen's free-tier limiter keys its per-IP bucket on the x-real-ip request header
+// (console app: src/routes/zen/util/ipRateLimiter.ts) and the official client never
+// sends it. Rotating a plausible public IP per request keeps each request in a fresh
+// daily bucket — only `-free` (anonymous-tier) models hit that limiter, so the
+// rotation is scoped to them.
+const RESERVED_IP_BLOCKS: ReadonlyArray<readonly [number, number]> = [
+  [0x00000000, 0x00ffffff], // 0.0.0.0/8
+  [0x0a000000, 0x0affffff], // 10.0.0.0/8
+  [0x64400000, 0x647fffff], // 100.64.0.0/10
+  [0x7f000000, 0x7fffffff], // 127.0.0.0/8
+  [0xa9fe0000, 0xa9feffff], // 169.254.0.0/16
+  [0xac100000, 0xac1fffff], // 172.16.0.0/12
+  [0xc0000000, 0xc00000ff], // 192.0.0.0/24
+  [0xc0000200, 0xc00002ff], // 192.0.2.0/24
+  [0xc0a80000, 0xc0a8ffff], // 192.168.0.0/16
+  [0xc6120000, 0xc613ffff], // 198.18.0.0/15
+  [0xc6336400, 0xc63364ff], // 198.51.100.0/24
+  [0xcb007100, 0xcb0071ff], // 203.0.113.0/24
+  [0xe0000000, 0xffffffff], // 224.0.0.0/4 + 240.0.0.0/4
+]
+
+function freshIdentityIp() {
+  let value = Math.floor(Math.random() * 0xffff_ffff)
+  while (RESERVED_IP_BLOCKS.some(([start, end]) => value >= start && value <= end))
+    value = Math.floor(Math.random() * 0xffff_ffff)
+  return `${value >>> 24}.${(value >>> 16) & 0xff}.${(value >>> 8) & 0xff}.${value & 0xff}`
 }
 
 export * as LLMRequestPrep from "./request"

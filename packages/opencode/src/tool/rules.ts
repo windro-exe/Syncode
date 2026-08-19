@@ -10,22 +10,20 @@ import * as path from "node:path"
 export const Parameters = Schema.Struct({
   action: Schema.optional(
     Schema.Literals(["add", "list", "remove"]).annotate({
-      description: '"add" (default) adds a new rule, "list" displays all active rules, "remove" deletes an existing rule.',
+      description:
+        '"add" (default) adds a new rule, "list" displays all active rules, "remove" deletes an existing rule.',
     }),
   ),
   scope: Schema.optional(
     Schema.Literals(["auto", "project", "global"]).annotate({
-      description: '"auto" (default; omit scope for normal requests), "project" (only when the user explicitly asks for project/workspace rules), "global" (only when the user explicitly asks for global/all-workspace rules).',
+      description:
+        '"auto" (default; omit scope for normal requests), "project" (only when the user explicitly asks for project/workspace rules), "global" (only when the user explicitly asks for global/all-workspace rules).',
     }),
   ),
   rule: Schema.optional(
     Schema.String.annotate({
-      description: "The concrete rule text (e.g. 'Always use early returns', 'Never commit changes without asking'). Required for 'add' and 'remove'.",
-    }),
-  ),
-  file: Schema.optional(
-    Schema.String.annotate({
-      description: "Optional rule category/filename without extension (e.g. 'style', 'security', 'git'). Defaults to 'project' or 'global'.",
+      description:
+        "The concrete rule text (e.g. 'Always use early returns', 'Never commit changes without asking'). Required for 'add' and 'remove'.",
     }),
   ),
 })
@@ -104,7 +102,6 @@ export const RulesTool = Tool.define<typeof Parameters, Metadata, never>(
               scope,
               rule: ruleText,
               cwd,
-              file: params.file,
             })
 
             return {
@@ -120,7 +117,6 @@ export const RulesTool = Tool.define<typeof Parameters, Metadata, never>(
             scope,
             rule: ruleText,
             cwd,
-            file: params.file,
           })
 
           return {

@@ -14,7 +14,7 @@ import {
   WorkspaceRoutingQueryFields,
 } from "../middleware/workspace-routing"
 import { described } from "./metadata"
-import { GlobalRules, GlobalRuleDeleteInput } from "./global"
+import { GlobalRules, GlobalRuleDeleteInput, GlobalRuleAddInput } from "./global"
 
 const PathInfo = Schema.Struct({
   home: Schema.String,
@@ -196,6 +196,18 @@ export const InstanceApi = HttpApi.make("instance")
             identifier: "rules.list",
             summary: "List project rules",
             description: "Retrieve project operational rules for the current workspace.",
+          }),
+        ),
+        HttpApiEndpoint.post("rulesAdd", InstancePaths.rules, {
+          query: WorkspaceRoutingQuery,
+          payload: GlobalRuleAddInput,
+          success: described(GlobalRules, "Rule added"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "rules.add",
+            summary: "Add a project rule",
+            description: "Append a project operational rule to the workspace rules.md.",
           }),
         ),
         HttpApiEndpoint.delete("rulesDelete", InstancePaths.rules, {
