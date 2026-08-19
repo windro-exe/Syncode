@@ -906,6 +906,78 @@ describe("session.llm.stream", () => {
     },
   )
 
+  const opencodeFreeFixture = { providerID: "opencode", modelID: "deepseek-v4-flash-free" }
+  it.instance(
+    "rotates x-real-ip per request for opencode -free models",
+    () =>
+      Effect.gen(function* () {
+        const fixture = loadFixture(opencodeFreeFixture.providerID, opencodeFreeFixture.modelID)
+        const first = waitRequest(
+          "/chat/completions",
+          new Response(createChatStream("Hello"), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        )
+        const second = waitRequest(
+          "/chat/completions",
+          new Response(createChatStream("Hello"), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        )
+
+        const resolved = yield* Provider.use.getModel(
+          ProviderV2.ID.make(opencodeFreeFixture.providerID),
+          ModelV2.ID.make(fixture.model.id),
+        )
+        const sessionID = SessionID.make("session-test-opencode-free")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("msg_user-opencode-free"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderV2.ID.make(opencodeFreeFixture.providerID), modelID: resolved.id },
+        } satisfies SessionV1.User
+        const input = {
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }] satisfies ModelMessage[],
+          tools: {},
+        }
+
+        yield* drain(input)
+        yield* drain(input)
+
+        const firstIp = (yield* Effect.promise(() => first)).headers.get("x-real-ip")
+        const secondIp = (yield* Effect.promise(() => second)).headers.get("x-real-ip")
+
+        expect(firstIp).toMatch(/^\d{1,3}(\.\d{1,3}){3}$/)
+        expect(secondIp).toMatch(/^\d{1,3}(\.\d{1,3}){3}$/)
+        expect(secondIp).not.toBe(firstIp)
+      }),
+    {
+      config: () => ({
+        enabled_providers: [opencodeFreeFixture.providerID],
+        provider: {
+          [opencodeFreeFixture.providerID]: {
+            options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
+          },
+        },
+      }),
+    },
+  )
+
   const mistralFixture = { providerID: "mistral", modelID: "mistral-small-latest" }
   it.instance(
     "replays native Mistral reasoning from chat history",
