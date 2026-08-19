@@ -6,7 +6,13 @@
 # version stamp, tags, builds every OS, publishes the GitHub Release (desktop
 # updater feed) and updates the dist branch (CLI/TUI updater feed). Tag pushes
 # (v*) and manual dispatch work the same way.
-# Refine signing/notarization as needed before relying on it.
+#
+# Error-proofing notes:
+# - ONE job (release) creates the GitHub Release; the matrix only builds and
+#   uploads artifacts. Concurrent release creation from matrix jobs races.
+# - The version job's bump commit is pushed with GITHUB_TOKEN (which never
+#   re-triggers workflows) and additionally guarded by message filter.
+# - Refine signing/notarization as needed before relying on it.
 name: syncode-release
 
 on:
@@ -109,14 +115,9 @@ jobs:
           ls -la dist-assets
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-assets-${{ matrix.label }}
-          path: dist-assets/
-      - name: Publish to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.version.outputs.version }}
-          files: |
-            packages/opencode/dist/opencode-*/bin/opencode*
+          name: release-assets-${{ matrix.label }}
+          path: |
+            dist-assets/
             packages/desktop/dist/*.exe
             packages/desktop/dist/*.dmg
             packages/desktop/dist/*.zip
@@ -124,6 +125,35 @@ jobs:
             packages/desktop/dist/*.deb
             packages/desktop/dist/*.rpm
             packages/desktop/dist/latest*.yml
+            packages/opencode/dist/opencode-*/bin/opencode*
+          if-no-files-found: warn
+
+  release:
+    needs: [version, build]
+    if: ${{ needs.version.outputs.version != '' && !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: assets
+      - name: Publish to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          files: |
+            assets/**/*.exe
+            assets/**/*.dmg
+            assets/**/*.zip
+            assets/**/*.AppImage
+            assets/**/*.deb
+            assets/**/*.rpm
+            assets/**/*.yml
+            assets/**/opencode*
 
   publish-dist:
     needs: [version, build]
@@ -135,7 +165,7 @@ jobs:
           ref: dist
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-assets-*
+          pattern: release-assets-*
           merge-multiple: true
           path: dist-assets
       - name: Commit binaries + version.json to dist
@@ -144,7 +174,7 @@ jobs:
         run: |
           git config user.name "syncode-release"
           git config user.email "release@windro-exe.users.github.com"
-          cp -f dist-assets/*.gz .
+          cp -f dist-assets/dist-assets/*.gz .
           printf '{\n  "version": "%s",\n  "date": "%s",\n  "branch": "dist"\n}\n' \
             "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > version.json
           git add -A
