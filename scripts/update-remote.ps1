@@ -2,13 +2,13 @@
 # published on the Syncode dist branch and, if they differ, downloads the prebuilt
 # Windows binary and swaps it in. Only needs PowerShell.
 #
-#   irm https://raw.githubusercontent.com/windro-xdd/Syncode/wnxd/scripts/update-remote.ps1 | iex
+#   irm https://raw.githubusercontent.com/windro-exe/Syncode/wnxd/scripts/update-remote.ps1 | iex
 #
 # It ONLY replaces the opencode.exe binary. It never touches your config, sessions,
 # auth, memory or local settings (%APPDATA%\opencode, ~/.local/share/opencode,
 # ~/.config/opencode). The previous binary is kept as opencode.exe.old for rollback.
 #
-# Env knobs: SYNCODE_REPO (default windro-xdd/Syncode), SYNCODE_DIST_BRANCH
+# Env knobs: SYNCODE_REPO (default windro-exe/Syncode), SYNCODE_DIST_BRANCH
 # (default dist), SYNCODE_BIN (install dir, default ~/.local/bin), SYNCODE_CHECK=1
 # (compare only, don't install).
 #
@@ -20,7 +20,7 @@ function Invoke-SyncodeUpdate {
   $ErrorActionPreference = "Stop"
   $ProgressPreference = "SilentlyContinue"   # IWR is glacially slow on PS 5.1 otherwise
 
-  $repo   = if ($env:SYNCODE_REPO) { $env:SYNCODE_REPO } else { "windro-xdd/Syncode" }
+  $repo   = if ($env:SYNCODE_REPO) { $env:SYNCODE_REPO } else { "windro-exe/Syncode" }
   $branch = if ($env:SYNCODE_DIST_BRANCH) { $env:SYNCODE_DIST_BRANCH } else { "dist" }
   $dest   = if ($env:SYNCODE_BIN)  { $env:SYNCODE_BIN }  else { Join-Path $HOME ".local/bin" }
   $base   = "https://raw.githubusercontent.com/$repo/$branch"

@@ -2,7 +2,8 @@ type Channel = "dev" | "beta" | "prod"
 const raw = (process.env.OPENCODE_CHANNEL as string) ?? (import.meta.env.OPENCODE_CHANNEL as string)
 export const CHANNEL: Channel = raw === "dev" || raw === "beta" || raw === "prod" ? raw : "prod"
 
-// wnxd fork: HARD-DISABLED on every channel. The in-app updater pulls upstream
-// anomalyco releases and would wipe all local fork features. Updates here are
-// manual rebuilds only. (Upstream gates this on `app.isPackaged && CHANNEL !== "dev"`.)
-export const UPDATER_ENABLED = false
+// wnxd fork: the in-app updater now points at this fork's GitHub releases
+// (windro-exe/Syncode, publish feed in electron-builder.config.ts) instead of
+// upstream anomalyco. Prod builds update from fork releases; dev/beta installs
+// stay manual so a dev checkout never gets clobbered by a release build.
+export const UPDATER_ENABLED = CHANNEL === "prod"

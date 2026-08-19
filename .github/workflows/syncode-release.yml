@@ -58,3 +58,4 @@ jobs:
             packages/desktop/dist/*.AppImage
             packages/desktop/dist/*.deb
             packages/desktop/dist/*.rpm
+            packages/desktop/dist/latest*.yml

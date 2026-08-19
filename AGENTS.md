@@ -215,22 +215,35 @@ the explicit check in `packages/opencode/src/provider/transform.ts` (`variants()
 - **Background task monitoring (`/tasks`)** (`packages/opencode/src/tool/monitor.ts`, `tasks.ts`).
 - **Desktop app protection**: In-app updater hard-disabled in `packages/desktop/src/main/constants.ts` and `electron-builder.config.ts`.
 
-### Upgrade workflow — DO NOT use the in-app auto-updater
+### Upgrade workflow — updates come from THIS repo only (wired 2026-08-19)
 
-The user has explicitly said: never let the auto-updater run. It will overwrite
-`~/.local/bin/opencode.exe` with a stock npm/GitHub release and erase every local feature.
+The in-app updaters were re-wired to the fork, never upstream:
 
-Concretely:
+- **CLI/TUI updater** (`packages/opencode/src/installation/index.ts`): checks the
+  fork's `dist` branch (`version.json` + gzip-compressed prebuilt binaries) and
+  swaps the binary in place, keeping `opencode.exe.old` for rollback. A
+  `semver.gt` guard in `src/cli/upgrade.ts` makes downgrades impossible.
+- **Desktop updater** (`packages/desktop/src/main/`): prod builds check GitHub
+  releases of `windro-exe/Syncode` (publish feed in `electron-builder.config.ts`,
+  `UPDATER_ENABLED` in `src/main/constants.ts`). Dev/beta installs stay manual.
+- **Publish side**: `syncode-release.yml` builds + uploads installers and
+  `latest*.yml` on tag pushes (e.g. `v1.19.0-wnxd-v3`). It currently does NOT
+  run — GitHub Actions is disabled on this repo. Enabling it requires a CI
+  account; until then releases stay manual.
 
-- The TUI's "Update Available" prompt: always answer **Skip**, never Confirm.
-- Never run `bun upgrade`, `opencode upgrade`, or any equivalent install script that pulls from GitHub releases or npm.
-- The version stamp (`OPENCODE_VERSION` baked at build time) is set high on purpose so the in-app upgrader's release-type check doesn't auto-install anything. If you see `1.19.0-wnxd-v2` or higher, that's intentional — don't "fix" it down.
+Still true:
 
-`scripts/update-remote.ps1` is the same hazard in local clothing: it downloads the
-prebuilt binary from the `dist` branch and swaps it in. That is correct for a machine
-that only consumes published builds, but running it after local source edits silently
-reverts the installed binary to whatever `dist` holds. On a dev machine, use
-`scripts/install.ps1` instead.
+- Never run `bun upgrade`, `opencode upgrade`, or any install path that pulls
+  from upstream npm/GitHub releases — those would still overwrite
+  `~/.local/bin/opencode.exe` with a stock build.
+- `scripts/update-remote.ps1` (now defaulting to `windro-exe/Syncode`) is correct
+  for machines that only consume published builds; on a dev machine after local
+  source edits, use `scripts/install.ps1` instead.
+- The version stamp (`OPENCODE_VERSION` baked at build time) must stay semver-ABOVE
+  any upstream release and must match what the `dist` branch publishes. If you see
+  `1.19.0-wnxd-v2` or higher, that's intentional — don't "fix" it down.
+- The dist branch is the CLI release channel: after a release build, update
+  `dist/version.json` + binaries so the in-app updater actually offers it.
 
 Syncode is standalone — there is no upstream to merge from. Feature and fix branches
 are the only update path:

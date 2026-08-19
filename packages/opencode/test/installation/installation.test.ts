@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
@@ -68,8 +68,8 @@ function testLayer(
 
 describe("installation", () => {
   describe("latest", () => {
-    testEffect(testLayer(() => jsonResponse({ tag_name: "v1.2.3" }))).effect(
-      "reads release version from GitHub releases",
+    testEffect(testLayer(() => jsonResponse({ version: "1.2.3" }))).effect(
+      "reads release version from the fork dist feed",
       () =>
         Effect.gen(function* () {
           const result = yield* Installation.use.latest("unknown")
@@ -77,8 +77,8 @@ describe("installation", () => {
         }),
     )
 
-    testEffect(testLayer(() => jsonResponse({ tag_name: "v4.0.0-beta.1" }))).effect(
-      "strips v prefix from GitHub release tag",
+    testEffect(testLayer(() => jsonResponse({ version: "4.0.0-beta.1" }))).effect(
+      "reads prerelease versions from the fork dist feed",
       () =>
         Effect.gen(function* () {
           const result = yield* Installation.use.latest("curl")
@@ -202,39 +202,32 @@ describe("installation", () => {
     )
 
     testEffect(
-      testLayer(
-        () => new Response("install script with token=secret", { status: 200 }),
-        (cmd, args) => {
-          if (cmd === "bash" && args[0] === "--version") return "GNU bash"
-          if (cmd === "bash" || cmd === "sh") return { code: 1, stderr: "script output with token=secret" }
-          return ""
-        },
-      ),
-    ).effect("returns sanitized typed errors when the curl install script fails", () =>
+      testLayer(() => new Response(Bun.gzipSync(Buffer.from("MZfake-binary-content")), { status: 200 })),
+    ).effect("refuses to replace a non-fork binary during curl upgrade", () =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(Installation.use.upgrade("curl", "9.9.9"))
         expect(error).toBeInstanceOf(Installation.UpgradeFailedError)
-        expect(error.stderr).toBe("Upgrade failed for curl (exit code 1).")
-        expect(error.message).toBe(error.stderr)
-        expect(error.stderr).not.toContain("secret")
-        expect(error.stderr).not.toContain("script output")
+        expect(error.message).toContain("refusing to replace")
       }),
     )
 
     testEffect(
-      testLayer(
-        () => new Response("install script", { status: 200 }),
-        (cmd, args) => {
-          if (cmd === "bash" && args[0] === "--version") return { code: 1, stderr: "missing" }
-          if (cmd === "bash") return { code: 1, stderr: "should not execute installer with bash" }
-          if (cmd === "sh") return "ok"
-          return ""
-        },
-      ),
-    ).effect("falls back to sh when bash is unavailable during curl upgrade", () =>
+      testLayer(() => new Response(Bun.gzipSync(Buffer.from("not an exe")), { status: 200 })),
+    ).effect("rejects a payload that is not a Windows executable", () =>
       Effect.gen(function* () {
-        yield* Installation.use.upgrade("curl", "9.9.9")
+        if (process.platform !== "win32") return // MZ validation is win32-only
+        const error = yield* Effect.flip(Installation.use.upgrade("curl", "9.9.9"))
+        expect(error).toBeInstanceOf(Installation.UpgradeFailedError)
+        expect(error.message).toBe("Upgrade failed for curl.")
       }),
     )
+  })
+
+  describe("gunzipBinary", () => {
+    test("decompresses dist binaries and validates the MZ magic on win32", () => {
+      const payload = Bun.gzipSync(Buffer.from("MZfake"))
+      const out = Installation.gunzipBinary(new Uint8Array(payload))
+      expect(Buffer.from(out).toString()).toBe("MZfake")
+    })
   })
 })
