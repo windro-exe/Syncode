@@ -191,7 +191,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
             "x-opencode-session": input.sessionID,
             "x-opencode-request": input.user.id,
             "x-opencode-client": input.flags.client,
-            ...(input.model.api.id.includes("-free") ? { "x-real-ip": freshIdentityIp() } : {}),
+            ...(input.model.api.id.includes("-free") ? { "x-real-ip": identityForSession(input.sessionID) } : {}),
             "User-Agent": USER_AGENT,
           }
         : {
@@ -226,9 +226,9 @@ export function hasToolCalls(messages: ModelMessage[]): boolean {
 
 // Zen's free-tier limiter keys its per-IP bucket on the x-real-ip request header
 // (console app: src/routes/zen/util/ipRateLimiter.ts) and the official client never
-// sends it. Rotating a plausible public IP per request keeps each request in a fresh
-// daily bucket — only `-free` (anonymous-tier) models hit that limiter, so the
-// rotation is scoped to them.
+// sends it. A session keeps ONE sticky identity so the request profile looks like
+// a single device; when the bucket trips (429 FreeUsageLimitError) the session
+// rotates to a fresh identity and the retry rides it (see processor.ts).
 const RESERVED_IP_BLOCKS: ReadonlyArray<readonly [number, number]> = [
   [0x00000000, 0x00ffffff], // 0.0.0.0/8
   [0x0a000000, 0x0affffff], // 10.0.0.0/8
@@ -250,6 +250,40 @@ function freshIdentityIp() {
   while (RESERVED_IP_BLOCKS.some(([start, end]) => value >= start && value <= end))
     value = Math.floor(Math.random() * 0xffff_ffff)
   return `${value >>> 24}.${(value >>> 16) & 0xff}.${(value >>> 8) & 0xff}.${value & 0xff}`
+}
+
+// Per-session sticky identities. Bounded: stale sessions are evicted once the
+// map grows past the cap so long-running servers do not leak entries.
+const STICKY_IDENTITY_MAX = 256
+const STICKY_IDENTITY_TTL_MS = 24 * 60 * 60 * 1000
+const stickyIdentities = new Map<string, { ip: string; lastUsed: number }>()
+
+function evictSticky() {
+  if (stickyIdentities.size < STICKY_IDENTITY_MAX) return
+  const now = Date.now()
+  const stale = [...stickyIdentities.entries()].filter(([, entry]) => now - entry.lastUsed > STICKY_IDENTITY_TTL_MS)
+  for (const [sessionID] of stale) stickyIdentities.delete(sessionID)
+  if (stickyIdentities.size >= STICKY_IDENTITY_MAX) {
+    const oldest = [...stickyIdentities.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0]
+    if (oldest) stickyIdentities.delete(oldest[0])
+  }
+}
+
+export function identityForSession(sessionID: string) {
+  const now = Date.now()
+  const existing = stickyIdentities.get(sessionID)
+  if (existing) {
+    existing.lastUsed = now
+    return existing.ip
+  }
+  const entry = { ip: freshIdentityIp(), lastUsed: now }
+  stickyIdentities.set(sessionID, entry)
+  evictSticky()
+  return entry.ip
+}
+
+export function rotateIdentity(sessionID: string) {
+  stickyIdentities.set(sessionID, { ip: freshIdentityIp(), lastUsed: Date.now() })
 }
 
 export * as LLMRequestPrep from "./request"

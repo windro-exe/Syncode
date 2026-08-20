@@ -18,12 +18,13 @@ const providerID = ProviderV2.ID.make("test")
 const retryProvider = "test"
 const it = testEffect(LayerNode.compile(LayerNode.group([SessionStatus.node, CrossSpawnSpawner.node])))
 
-function apiError(headers?: Record<string, string>): SessionV1.APIError {
+function apiError(headers?: Record<string, string>, responseBody?: string): SessionV1.APIError {
   return Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
     new SessionV1.APIError({
       message: "boom",
       isRetryable: true,
       responseHeaders: headers,
+      responseBody,
     }).toObject(),
   )
 }
@@ -37,6 +38,12 @@ describe("session.retry.delay", () => {
     const error = apiError()
     const delays = Array.from({ length: 10 }, (_, index) => SessionRetry.delay(index + 1, error, 0))
     expect(delays).toStrictEqual([2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000, 30000])
+  })
+
+  test("caps free-tier limit delays at 30s regardless of retry-after", () => {
+    const error = apiError({ "retry-after": "43200" }, "FreeUsageLimitError")
+    const delays = Array.from({ length: 6 }, (_, index) => SessionRetry.delay(index + 1, error, 0))
+    expect(delays).toStrictEqual([2000, 4000, 8000, 16000, 30000, 30000])
   })
 
   test("adds jitter to exponential delays", () => {
