@@ -207,6 +207,8 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       }),
     opencode: Effect.fnUntraced(function* (input: Info) {
       const env = yield* dep.env()
+      const cfg = yield* dep.config()
+      const opencodeOptions = cfg.provider?.["opencode"]?.options
       const hasKey = iife(() => {
         if (input.env.some((item) => env[item])) return true
         return false
@@ -214,7 +216,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const ok =
         hasKey ||
         Boolean(yield* dep.auth(input.id)) ||
-        Boolean((yield* dep.config()).provider?.["opencode"]?.options?.apiKey)
+        Boolean(opencodeOptions?.apiKey)
 
       if (!ok) {
         for (const [key, value] of Object.entries(input.models)) {
@@ -225,7 +227,10 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 
       return {
         autoload: Object.keys(input.models).length > 0,
-        options: ok ? {} : { apiKey: "public" },
+        options: {
+          ...(ok ? {} : { apiKey: "public" }),
+          ...(opencodeOptions?.["proxy"] ? { proxy: opencodeOptions["proxy"] } : {}),
+        },
       }
     }),
     openai: () =>
@@ -1854,10 +1859,14 @@ const layer = Layer.effect(
             } catch {}
           }
 
+          const sessionID =
+            typeof (opts.headers as any)?.get === "function"
+              ? (opts.headers as any).get("x-opencode-session")
+              : ((opts.headers as any)?.["x-opencode-session"] ?? (opts.headers as any)?.["X-Opencode-Session"] ?? options["sessionID"] ?? "")
           const proxy =
-            options["proxy"] ??
             (opts as any).proxy ??
-            ProxyPool.getProxyForSession(options["sessionID"] || "", typeof input === "string" ? input : input?.url)
+            options["proxy"] ??
+            ProxyPool.getProxyForSession(sessionID, typeof input === "string" ? input : input?.url)
 
           const res = await fetchFn(input, {
             ...opts,
