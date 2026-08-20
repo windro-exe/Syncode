@@ -14,6 +14,7 @@ import { Effect, Record } from "effect"
 import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
 import type { Plugin } from "@/plugin"
 import { mergeDeep } from "remeda"
+import { ProxyPool } from "@/util/proxy-pool"
 
 const USER_AGENT = `opencode/${InstallationVersion}`
 
@@ -52,6 +53,25 @@ export type Prepared = {
 
 const mergeOptions = (target: Record<string, any>, source: Record<string, any> | undefined): Record<string, any> =>
   mergeDeep(target, source ?? {}) as Record<string, any>
+
+export function isFreeModel(model: {
+  id?: string
+  providerID?: string
+  api?: { id?: string }
+  cost?: { input?: number; output?: number }
+}): boolean {
+  const id = (model.id || "").toLowerCase()
+  const apiId = (model.api?.id || "").toLowerCase()
+  const providerID = (model.providerID || "").toLowerCase()
+  return (
+    id.includes("-free") ||
+    id.includes(":free") ||
+    apiId.includes("-free") ||
+    apiId.includes(":free") ||
+    providerID === "orcarouter" ||
+    (providerID.startsWith("opencode") && (!model.cost || (model.cost.input === 0 && model.cost.output === 0)))
+  )
+}
 
 export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: PrepareInput) {
   const isOpenaiOauth = input.provider.id === "openai" && input.auth?.type === "oauth"
@@ -97,6 +117,12 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     delete options.include
   }
   if (isOpenaiOauth) options.instructions = system.join("\n")
+
+  options.sessionID = input.sessionID
+  const sessionProxy = ProxyPool.getProxyForSession(input.sessionID, input.model.api.url)
+  if (sessionProxy) {
+    options.proxy = sessionProxy
+  }
 
   const messages =
     isOpenaiOauth || input.isWorkflow
@@ -178,6 +204,8 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     ? (yield* InstanceState.context).project.id
     : undefined
 
+  const isFree = isFreeModel(input.model)
+
   return {
     system,
     messages,
@@ -191,13 +219,14 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
             "x-opencode-session": input.sessionID,
             "x-opencode-request": input.user.id,
             "x-opencode-client": input.flags.client,
-            ...(input.model.api.id.includes("-free") ? { "x-real-ip": identityForSession(input.sessionID) } : {}),
+            ...(isFree ? { "x-real-ip": identityForSession(input.sessionID) } : {}),
             "User-Agent": USER_AGENT,
           }
         : {
             "x-session-affinity": input.sessionID,
             "X-Session-Id": input.sessionID,
             ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+            ...(isFree ? { "x-real-ip": identityForSession(input.sessionID) } : {}),
             "User-Agent": USER_AGENT,
           }),
       ...input.model.headers,
@@ -284,6 +313,11 @@ export function identityForSession(sessionID: string) {
 
 export function rotateIdentity(sessionID: string) {
   stickyIdentities.set(sessionID, { ip: freshIdentityIp(), lastUsed: Date.now() })
+}
+
+export function rotateSession(sessionID: string) {
+  rotateIdentity(sessionID)
+  ProxyPool.rotateProxy(sessionID)
 }
 
 export * as LLMRequestPrep from "./request"
