@@ -15,8 +15,10 @@ import { For, Show, type Component } from "solid-js"
 import { useLocal } from "@/context/local"
 import { popularProviders } from "@/hooks/use-providers"
 import { useLanguage } from "@/context/language"
+import { useServerSync } from "@/context/server-sync"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { DialogConnectProvider } from "./dialog-connect-provider"
+import { DialogCustomProvider } from "./dialog-custom-provider"
 import { decode64 } from "@/utils/base64"
 import { SettingsListV2 } from "./settings-v2/parts/list"
 import { SettingsRowV2 } from "./settings-v2/parts/row"
@@ -120,7 +122,13 @@ export const DialogManageModelsV2: Component = () => {
   const local = useLocal()
   const language = useLanguage()
   const dialog = useDialog()
+  const serverSync = useServerSync()
   const directory = () => decode64(local.slug())
+
+  const isCustomProvider = (providerID: string) => {
+    const p = serverSync().data.config.provider?.[providerID]
+    return Boolean(p && (p.npm === "@ai-sdk/openai-compatible" || (p.models && Object.keys(p.models).length > 0)))
+  }
 
   const handleConnectProvider = () => {
     void dialog.show(() => <DialogConnectProvider directory={directory} />)
@@ -223,6 +231,19 @@ export const DialogManageModelsV2: Component = () => {
                         <div class="flex min-w-0 items-center gap-2">
                           <ProviderIcon id={group.category} width={16} height={16} class="ml-4 shrink-0" />
                           <h3 class="settings-v2-section-title">{group.items[0].provider.name}</h3>
+                          <Show when={isCustomProvider(group.category)}>
+                            <button
+                              type="button"
+                              class="text-12-regular text-text-interactive-base hover:underline ml-2 cursor-pointer"
+                              onClick={() => {
+                                dialog.show(() => (
+                                  <DialogCustomProvider providerID={group.category} onBack={dialog.close} />
+                                ))
+                              }}
+                            >
+                              {language.t("common.edit")}
+                            </button>
+                          </Show>
                         </div>
                         <div>
                           <SwitchV2

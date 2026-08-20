@@ -77,4 +77,32 @@ describe("validateCustomProvider", () => {
       value: undefined,
     })
   })
+
+  test("allows editing existing provider when originalProviderID matches", () => {
+    const result = validateCustomProvider({
+      form: {
+        providerID: "custom-provider",
+        name: "Custom Provider Updated",
+        baseURL: "https://api.example.com/v1",
+        apiKey: "new-secret",
+        models: [
+          { row: "m0", id: "model-a", name: "Model A", err: {} },
+          { row: "m1", id: "model-b", name: "Model B", err: {} },
+        ],
+        headers: [],
+        err: {},
+      },
+      t,
+      disabledProviders: [],
+      existingProviderIDs: new Set(["custom-provider"]),
+      originalProviderID: "custom-provider",
+    })
+
+    expect(result.err.providerID).toBeUndefined()
+    expect(result.result?.providerID).toBe("custom-provider")
+    expect(result.result?.config.models).toEqual({
+      "model-a": { name: "Model A" },
+      "model-b": { name: "Model B" },
+    })
+  })
 })

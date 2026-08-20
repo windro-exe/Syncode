@@ -15,6 +15,7 @@ import { useLanguage } from "@/context/language"
 import { type FormState, headerRow, modelRow, validateCustomProvider } from "./dialog-custom-provider-form"
 
 type Props = {
+  providerID?: string
   onBack: () => void
 }
 
@@ -35,24 +36,53 @@ export function DialogCustomProvider(props: Props) {
       }
       transition
     >
-      <CustomProviderForm />
+      <CustomProviderForm providerID={props.providerID} />
     </Dialog>
   )
 }
 
-export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
+export function CustomProviderForm(props: { providerID?: string; autofocus?: boolean } = {}) {
   const dialog = useDialog()
   const serverSync = useServerSync()
   const serverSDK = useServerSDK()
   const language = useLanguage()
 
+  const existingConfig = () => (props.providerID ? serverSync().data.config.provider?.[props.providerID] : undefined)
+
+  const initialModels = () => {
+    const cfg = existingConfig()
+    if (cfg?.models && Object.keys(cfg.models).length > 0) {
+      return Object.entries(cfg.models).map(([id, m]) => ({
+        row: `row-${id}`,
+        id,
+        name: (m as any)?.name ?? id,
+        err: {},
+      }))
+    }
+    return [modelRow()]
+  }
+
+  const initialHeaders = () => {
+    const cfg = existingConfig()
+    const headers = cfg?.options?.headers
+    if (headers && Object.keys(headers).length > 0) {
+      return Object.entries(headers).map(([key, value]) => ({
+        row: `header-${key}`,
+        key,
+        value: String(value),
+        err: {},
+      }))
+    }
+    return [headerRow()]
+  }
+
   const [form, setForm] = createStore<FormState>({
-    providerID: "",
-    name: "",
-    baseURL: "",
-    apiKey: "",
-    models: [modelRow()],
-    headers: [headerRow()],
+    providerID: props.providerID ?? "",
+    name: existingConfig()?.name ?? "",
+    baseURL: (existingConfig()?.options?.baseURL as string) ?? "",
+    apiKey: (existingConfig()?.options?.apiKey as string) ?? "",
+    models: initialModels(),
+    headers: initialHeaders(),
     err: {},
   })
 
@@ -120,6 +150,7 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
       t: language.t,
       disabledProviders: serverSync().data.config.disabled_providers ?? [],
       existingProviderIDs: new Set(serverSync().data.provider.all.keys()),
+      originalProviderID: props.providerID,
     })
     batch(() => {
       setForm("err", output.err)
@@ -145,10 +176,22 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
         })
       }
 
-      await serverSync().updateConfig({
-        provider: { [result.providerID]: result.config },
-        disabled_providers: nextDisabled,
-      })
+      if (props.providerID && props.providerID !== result.providerID) {
+        const currentProviders = { ...(serverSync().data.config.provider ?? {}) }
+        delete currentProviders[props.providerID]
+        await serverSync().updateConfig({
+          provider: {
+            ...currentProviders,
+            [result.providerID]: result.config,
+          },
+          disabled_providers: nextDisabled,
+        })
+      } else {
+        await serverSync().updateConfig({
+          provider: { [result.providerID]: result.config },
+          disabled_providers: nextDisabled,
+        })
+      }
       return result
     },
     onSuccess: (result) => {
@@ -179,7 +222,11 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
     <div class="flex flex-col gap-6 px-2.5 pb-3 overflow-y-auto max-h-[60vh]">
       <div class="px-2.5 flex gap-4 items-center">
         <ProviderIcon id="synthetic" class="size-5 shrink-0 icon-strong-base" />
-        <div class="text-16-medium text-text-strong">{language.t("provider.custom.title")}</div>
+        <div class="text-16-medium text-text-strong">
+          {props.providerID
+            ? `${language.t("common.edit")}: ${existingConfig()?.name || props.providerID}`
+            : language.t("provider.custom.title")}
+        </div>
       </div>
 
       <form onSubmit={save} class="px-2.5 pb-6 flex flex-col gap-6">
