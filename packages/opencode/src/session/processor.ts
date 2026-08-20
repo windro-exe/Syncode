@@ -16,6 +16,7 @@ import { isOverflow } from "./overflow"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
+import { rotateIdentity } from "./llm/request"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider/provider"
@@ -689,6 +690,17 @@ const layer = Layer.effect(
                 provider: input.model.providerID,
                 parse,
                 set: (info) => {
+                  // wnxd fork: a free-tier 429 means the session's sticky
+                  // identity bucket tripped — rotate so the retry's fresh
+                  // prepare() rides a new identity instead of waiting out an
+                  // hours-long retry-after.
+                  if (
+                    info.action?.reason === "free_tier_limit" &&
+                    input.model.providerID.startsWith("opencode") &&
+                    input.model.api.id.includes("-free")
+                  ) {
+                    rotateIdentity(ctx.sessionID)
+                  }
                   return status.set(ctx.sessionID, {
                     type: "retry",
                     attempt: info.attempt,

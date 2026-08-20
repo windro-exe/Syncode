@@ -908,7 +908,7 @@ describe("session.llm.stream", () => {
 
   const opencodeFreeFixture = { providerID: "opencode", modelID: "deepseek-v4-flash-free" }
   it.instance(
-    "rotates x-real-ip per request for opencode -free models",
+    "uses one sticky x-real-ip per opencode -free session, distinct across sessions",
     () =>
       Effect.gen(function* () {
         const fixture = loadFixture(opencodeFreeFixture.providerID, opencodeFreeFixture.modelID)
@@ -926,12 +926,18 @@ describe("session.llm.stream", () => {
             headers: { "Content-Type": "text/event-stream" },
           }),
         )
+        const third = waitRequest(
+          "/chat/completions",
+          new Response(createChatStream("Hello"), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        )
 
         const resolved = yield* Provider.use.getModel(
           ProviderV2.ID.make(opencodeFreeFixture.providerID),
           ModelV2.ID.make(fixture.model.id),
         )
-        const sessionID = SessionID.make("session-test-opencode-free")
         const agent = {
           name: "test",
           mode: "primary",
@@ -940,15 +946,20 @@ describe("session.llm.stream", () => {
         } satisfies Agent.Info
         const user = {
           id: MessageID.make("msg_user-opencode-free"),
-          sessionID,
+          sessionID: SessionID.make("session-test-opencode-free"),
           role: "user",
           time: { created: Date.now() },
           agent: agent.name,
           model: { providerID: ProviderV2.ID.make(opencodeFreeFixture.providerID), modelID: resolved.id },
         } satisfies SessionV1.User
+        const otherUser = {
+          ...user,
+          id: MessageID.make("msg_user-opencode-free-2"),
+          sessionID: SessionID.make("session-test-opencode-free-2"),
+        } satisfies SessionV1.User
         const input = {
           user,
-          sessionID,
+          sessionID: user.sessionID,
           model: resolved,
           agent,
           system: ["You are a helpful assistant."],
@@ -958,13 +969,16 @@ describe("session.llm.stream", () => {
 
         yield* drain(input)
         yield* drain(input)
+        yield* drain({ ...input, user: otherUser, sessionID: otherUser.sessionID })
 
         const firstIp = (yield* Effect.promise(() => first)).headers.get("x-real-ip")
         const secondIp = (yield* Effect.promise(() => second)).headers.get("x-real-ip")
+        const thirdIp = (yield* Effect.promise(() => third)).headers.get("x-real-ip")
 
         expect(firstIp).toMatch(/^\d{1,3}(\.\d{1,3}){3}$/)
-        expect(secondIp).toMatch(/^\d{1,3}(\.\d{1,3}){3}$/)
-        expect(secondIp).not.toBe(firstIp)
+        expect(secondIp).toBe(firstIp) // sticky within a session
+        expect(thirdIp).toMatch(/^\d{1,3}(\.\d{1,3}){3}$/)
+        expect(thirdIp).not.toBe(firstIp) // distinct across sessions
       }),
     {
       config: () => ({
