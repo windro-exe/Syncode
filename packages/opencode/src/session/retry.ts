@@ -45,9 +45,13 @@ function cap(ms: number) {
 
 export function delay(attempt: number, error?: SessionV1.APIError, random = Math.random()) {
   // wnxd fork: a free-tier bucket 429 carries a Retry-After pointing at UTC
-  // midnight — meaningless when the retry rotates to a fresh identity. Always
+  // midnight — meaningless when the retry rotates to a fresh identity/key/proxy. Always
   // use the short bounded backoff for these so the rotation actually helps.
-  if (error?.data.responseBody?.includes("FreeUsageLimitError")) {
+  const isFreeLimit =
+    error?.data.responseBody?.includes("FreeUsageLimitError") ||
+    error?.data.message?.toLowerCase().includes("free limit") ||
+    error?.data.message?.toLowerCase().includes("free usage")
+  if (isFreeLimit) {
     return cap(Math.min(exponential(attempt, random), RETRY_MAX_DELAY_NO_HEADERS))
   }
   if (error) {

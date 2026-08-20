@@ -31,8 +31,34 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+import { ProxyPool } from "@/util/proxy-pool"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 300_000
+
+const providerKeyPools = new Map<string, { keys: string[]; index: number }>()
+
+export function registerKeyPool(providerID: string, rawKeys: string | string[]) {
+  const keys = Array.isArray(rawKeys)
+    ? rawKeys.flatMap((k) => k.split(/[\n,;]/)).map((k) => k.trim()).filter(Boolean)
+    : rawKeys.split(/[\n,;]/).map((k) => k.trim()).filter(Boolean)
+  if (keys.length > 0) {
+    const existing = providerKeyPools.get(providerID)
+    providerKeyPools.set(providerID, { keys, index: existing ? existing.index : 0 })
+  }
+}
+
+export function getActiveProviderKey(providerID: string): string | undefined {
+  const pool = providerKeyPools.get(providerID)
+  if (!pool || pool.keys.length === 0) return undefined
+  return pool.keys[pool.index % pool.keys.length]
+}
+
+export function rotateProviderKey(providerID: string): boolean {
+  const pool = providerKeyPools.get(providerID)
+  if (!pool || pool.keys.length <= 1) return false
+  pool.index++
+  return true
+}
 
 function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   if (typeof ms !== "number" || ms <= 0) return res
@@ -1581,6 +1607,7 @@ const layer = Layer.effect(
           if (disabled.has(providerID)) continue
           const apiKey = provider.env.map((item) => envs[item]).find(Boolean)
           if (!apiKey) continue
+          registerKeyPool(providerID, apiKey)
           mergeProvider(providerID, {
             source: "env",
             key: provider.env.length === 1 ? apiKey : undefined,
@@ -1593,6 +1620,7 @@ const layer = Layer.effect(
           const providerID = ProviderV2.ID.make(id)
           if (disabled.has(providerID)) continue
           if (provider.type === "api") {
+            registerKeyPool(providerID, provider.key)
             mergeProvider(providerID, {
               source: "api",
               key: provider.key,
@@ -1772,7 +1800,9 @@ const layer = Layer.effect(
         })
 
         if (baseURL !== undefined) options["baseURL"] = baseURL
-        if (options["apiKey"] === undefined && provider.key) options["apiKey"] = provider.key
+        if (options["apiKey"] === undefined && provider.key) {
+          options["apiKey"] = getActiveProviderKey(model.providerID) ?? provider.key
+        }
         if (model.headers)
           options["headers"] = {
             ...options["headers"],
@@ -1824,8 +1854,14 @@ const layer = Layer.effect(
             } catch {}
           }
 
+          const proxy =
+            options["proxy"] ??
+            (opts as any).proxy ??
+            ProxyPool.getProxyForSession(options["sessionID"] || "", typeof input === "string" ? input : input?.url)
+
           const res = await fetchFn(input, {
             ...opts,
+            ...(proxy ? { proxy } : {}),
             // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
             timeout: false,
           }).finally(() => headerTimeoutCtl?.clear())
