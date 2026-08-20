@@ -9,6 +9,7 @@ import { errorMessage } from "@/util/error"
 import { ChildProcess } from "effect/unstable/process"
 import { AppProcess } from "@opencode-ai/core/process"
 import path from "path"
+import { createHash } from "node:crypto"
 import { chmodSync, existsSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { makeRuntime } from "@opencode-ai/core/effect/runtime"
 import semver from "semver"
@@ -62,7 +63,12 @@ export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedErr
 }
 
 // Response schemas for external version APIs
-const DistVersion = Schema.Struct({ version: Schema.String })
+// sha256 is a per-asset hash map (rustup-style manifest); optional so feeds
+// that predate it keep working until republished.
+const DistVersion = Schema.Struct({
+  version: Schema.String,
+  sha256: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+})
 const NpmPackage = Schema.Struct({ version: Schema.String })
 const BrewFormula = Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) })
 const BrewInfoV2 = Schema.Struct({
@@ -146,12 +152,25 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
       return new Uint8Array(yield* response.arrayBuffer)
     }, Effect.mapError(() => new UpgradeFailedError({ stderr: upgradeFailure("curl") })))
 
+    const fetchDistManifest = Effect.fnUntraced(function* () {
+      const response = yield* httpOk.execute(
+        HttpClientRequest.get(`${DIST_BASE}/version.json`).pipe(HttpClientRequest.acceptJson),
+      )
+      return yield* HttpClientResponse.schemaBodyJson(DistVersion)(response)
+    }, Effect.mapError(() => new UpgradeFailedError({ stderr: upgradeFailure("curl") })))
+
     const upgradeCurl = Effect.fnUntraced(function* () {
-      // wnxd fork: replace the binary in place from the fork's dist branch,
-      // keeping the previous binary as `.old` for rollback (mirrors install.ps1).
+      const asset = distAssetName()
       let binary: Uint8Array
       try {
-        binary = gunzipBinary(yield* downloadDistAsset())
+        // Verify the downloaded bytes against the manifest hash when the feed
+        // provides one (rustup-style integrity), then decompress and swap.
+        const manifest = yield* fetchDistManifest()
+        const expected = manifest.sha256?.[asset]
+        const raw = new Uint8Array(yield* downloadDistAsset())
+        if (expected && sha256Hex(raw) !== expected)
+          return yield* new UpgradeFailedError({ stderr: `sha256 mismatch for ${asset}` })
+        binary = gunzipBinary(raw)
       } catch {
         return yield* new UpgradeFailedError({ stderr: upgradeFailure("curl") })
       }
@@ -338,6 +357,10 @@ export function distAssetName() {
   if (platform === "darwin") return `opencode-darwin-${arch}.gz`
   if (platform === "linux") return `opencode-linux-${arch}.gz`
   throw new Error(`no dist asset for ${platform}/${arch}`)
+}
+
+export function sha256Hex(bytes: Uint8Array) {
+  return createHash("sha256").update(bytes).digest("hex")
 }
 
 // Decompress and sanity-check the payload before it can touch the installed

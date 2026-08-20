@@ -202,7 +202,10 @@ describe("installation", () => {
     )
 
     testEffect(
-      testLayer(() => new Response(Bun.gzipSync(Buffer.from("MZfake-binary-content")), { status: 200 })),
+      testLayer((request) => {
+        if (request.url.endsWith("/version.json")) return jsonResponse({ version: "9.9.9" })
+        return new Response(Bun.gzipSync(Buffer.from("MZfake-binary-content")), { status: 200 })
+      }),
     ).effect("refuses to replace a non-fork binary during curl upgrade", () =>
       Effect.gen(function* () {
         const error = yield* Effect.flip(Installation.use.upgrade("curl", "9.9.9"))
@@ -212,13 +215,49 @@ describe("installation", () => {
     )
 
     testEffect(
-      testLayer(() => new Response(Bun.gzipSync(Buffer.from("not an exe")), { status: 200 })),
+      testLayer((request) => {
+        if (request.url.endsWith("/version.json")) return jsonResponse({ version: "9.9.9" })
+        return new Response(Bun.gzipSync(Buffer.from("not an exe")), { status: 200 })
+      }),
     ).effect("rejects a payload that is not a Windows executable", () =>
       Effect.gen(function* () {
         if (process.platform !== "win32") return // MZ validation is win32-only
         const error = yield* Effect.flip(Installation.use.upgrade("curl", "9.9.9"))
         expect(error).toBeInstanceOf(Installation.UpgradeFailedError)
         expect(error.message).toBe("Upgrade failed for curl.")
+      }),
+    )
+
+    testEffect(
+      testLayer((request) => {
+        if (request.url.endsWith("/version.json"))
+          return jsonResponse({ version: "9.9.9", sha256: { [Installation.distAssetName()]: "deadbeef" } })
+        return new Response(Bun.gzipSync(Buffer.from("MZfake-binary-content")), { status: 200 })
+      }),
+    ).effect("rejects a dist asset whose sha256 does not match", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(Installation.use.upgrade("curl", "9.9.9"))
+        expect(error).toBeInstanceOf(Installation.UpgradeFailedError)
+        expect(error.message).toContain("sha256 mismatch")
+      }),
+    )
+
+    testEffect(
+      testLayer((request) => {
+        if (request.url.endsWith("/version.json")) {
+          const payload = Bun.gzipSync(Buffer.from("MZfake-binary-content"))
+          return jsonResponse({
+            version: "9.9.9",
+            sha256: { [Installation.distAssetName()]: Installation.sha256Hex(new Uint8Array(payload)) },
+          })
+        }
+        return new Response(Bun.gzipSync(Buffer.from("MZfake-binary-content")), { status: 200 })
+      }),
+    ).effect("accepts a dist asset with a matching sha256", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(Installation.use.upgrade("curl", "9.9.9"))
+        expect(error).toBeInstanceOf(Installation.UpgradeFailedError)
+        expect(error.message).toContain("refusing to replace")
       }),
     )
   })

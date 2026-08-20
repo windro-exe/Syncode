@@ -107,7 +107,12 @@ try {
         } finally {
             Pop-Location
         }
-        $manifest = @{ version = $next; date = (Get-Date).ToUniversalTime().ToString("o"); branch = "dist" } | ConvertTo-Json
+        $manifest = @{
+            version = $next
+            date    = (Get-Date).ToUniversalTime().ToString("o")
+            branch  = "dist"
+            sha256  = @{ $gzName = (Get-FileHash "$distDir\$gzName" -Algorithm SHA256).Hash.ToLower() }
+        } | ConvertTo-Json
         Set-Content "$distDir\version.json" $manifest -NoNewline
         Push-Location $distDir
         try {
