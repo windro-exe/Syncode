@@ -16,7 +16,8 @@ import { isOverflow } from "./overflow"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
-import { rotateIdentity } from "./llm/request"
+import { rotateSession, isFreeModel } from "./llm/request"
+import { rotateProviderKey } from "@/provider/provider"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider/provider"
@@ -690,16 +691,20 @@ const layer = Layer.effect(
                 provider: input.model.providerID,
                 parse,
                 set: (info) => {
-                  // wnxd fork: a free-tier 429 means the session's sticky
-                  // identity bucket tripped — rotate so the retry's fresh
-                  // prepare() rides a new identity instead of waiting out an
+                  // wnxd fork: a rate limit or free-tier 429 means the session's sticky
+                  // identity/proxy bucket or provider key tripped — rotate all dimensions
+                  // so the retry rides fresh state instead of waiting out an
                   // hours-long retry-after.
-                  if (
-                    info.action?.reason === "free_tier_limit" &&
-                    input.model.providerID.startsWith("opencode") &&
-                    input.model.api.id.includes("-free")
-                  ) {
-                    rotateIdentity(ctx.sessionID)
+                  const isFree = isFreeModel(input.model)
+                  const isRateLimit =
+                    info.action?.reason === "free_tier_limit" ||
+                    info.message.toLowerCase().includes("limit") ||
+                    info.message.toLowerCase().includes("rate") ||
+                    info.message.toLowerCase().includes("too many requests")
+
+                  if (isFree || isRateLimit) {
+                    rotateSession(ctx.sessionID)
+                    rotateProviderKey(input.model.providerID)
                   }
                   return status.set(ctx.sessionID, {
                     type: "retry",
