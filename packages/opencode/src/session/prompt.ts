@@ -1185,6 +1185,55 @@ const layer = Layer.effect(
               })
             }
 
+            // Auto-continuation on length truncation: if the model was cut off mid-generation
+            // by the token budget (finish === "length"), inject a synthetic continuation turn
+            // to allow the model to finish the task/thought autonomously (capped at 5 iterations).
+            if (lastAssistant.finish === "length") {
+              const MAX_LENGTH_CONTINUATIONS = 5
+              const lengthContinuations = msgs.filter(
+                (m) =>
+                  m.info.role === "user" &&
+                  m.parts.some(
+                    (p) =>
+                      p.type === "text" &&
+                      p.synthetic &&
+                      typeof p.text === "string" &&
+                      p.text.includes("<length-continuation>"),
+                  ),
+              ).length
+
+              if (lengthContinuations < MAX_LENGTH_CONTINUATIONS) {
+                const continuationID = MessageID.ascending()
+                yield* sessions.updateMessage({
+                  id: continuationID,
+                  role: "user",
+                  sessionID,
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                  time: { created: Date.now() },
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: continuationID,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: [
+                    "<length-continuation>",
+                    "Your previous response was cut off because it reached the generation token limit (finish_reason: length).",
+                    "Please continue exactly where you left off without repeating any prior thoughts or text, and complete the remaining task.",
+                    "</length-continuation>",
+                  ].join("\n"),
+                })
+                yield* Effect.logInfo("length.continue", {
+                  sessionID,
+                  assistantID: lastAssistant.id,
+                  iteration: lengthContinuations + 1,
+                })
+                continue
+              }
+            }
+
             // /btw: if the turn just answered was an ephemeral aside, prune the
             // question and its answer so they drop from future context. Runs
             // BEFORE the /goal block: a goal continuation would move lastUser off

@@ -5718,3 +5718,67 @@ describe("ProviderTransform.options - kimi family adaptive thinking", () => {
     expect(result.thinking).toBeUndefined()
   })
 })
+
+describe("ProviderTransform.maxOutputTokens", () => {
+  const makeModel = (overrides: Record<string, any> = {}) =>
+    ({
+      id: "test-provider/test-model",
+      providerID: "test-provider",
+      api: {
+        id: "test-model",
+        url: "https://api.example.com",
+        npm: "@ai-sdk/openai-compatible",
+      },
+      name: "Test Model",
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: false,
+        toolcall: true,
+        input: { text: true, audio: false, image: false, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      limit: { context: 1_048_576, output: 131_072 },
+      status: "active",
+      options: {},
+      headers: {},
+      ...overrides,
+    }) as any
+
+  test("returns model output limit for high-capacity reasoning models (e.g. Ox Alpha 131k)", () => {
+    const model = makeModel({
+      limit: { context: 1_048_576, output: 131_072 },
+    })
+    expect(ProviderTransform.maxOutputTokens(model)).toBe(131_072)
+  })
+
+  test("returns model output limit for standard models (e.g. 8k)", () => {
+    const model = makeModel({
+      limit: { context: 128_000, output: 8_192 },
+    })
+    expect(ProviderTransform.maxOutputTokens(model)).toBe(8_192)
+  })
+
+  test("returns OUTPUT_TOKEN_MAX when model output limit is zero/unspecified", () => {
+    const model = makeModel({
+      limit: { context: 128_000, output: 0 },
+    })
+    expect(ProviderTransform.maxOutputTokens(model)).toBe(ProviderTransform.OUTPUT_TOKEN_MAX)
+  })
+
+  test("respects explicit outputTokenMax override flag when smaller than model limit", () => {
+    const model = makeModel({
+      limit: { context: 1_048_576, output: 131_072 },
+    })
+    expect(ProviderTransform.maxOutputTokens(model, 16_000)).toBe(16_000)
+  })
+
+  test("clamps explicit outputTokenMax override to model limit when override exceeds model limit", () => {
+    const model = makeModel({
+      limit: { context: 128_000, output: 4_096 },
+    })
+    expect(ProviderTransform.maxOutputTokens(model, 32_000)).toBe(4_096)
+  })
+})
+
