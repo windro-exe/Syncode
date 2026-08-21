@@ -1438,8 +1438,12 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
   return { [key]: normalized }
 }
 
-export function maxOutputTokens(model: Provider.Model, outputTokenMax = OUTPUT_TOKEN_MAX): number {
-  return Math.min(model.limit.output, outputTokenMax) || outputTokenMax
+export function maxOutputTokens(model: Provider.Model, outputTokenMax?: number): number {
+  const modelLimit = model.limit.output || 0
+  if (outputTokenMax !== undefined && outputTokenMax > 0) {
+    return modelLimit > 0 ? Math.min(modelLimit, outputTokenMax) : outputTokenMax
+  }
+  return modelLimit > 0 ? modelLimit : OUTPUT_TOKEN_MAX
 }
 
 type JsonRecord = Record<string, unknown>

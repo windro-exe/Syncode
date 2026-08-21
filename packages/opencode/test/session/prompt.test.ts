@@ -674,6 +674,47 @@ it.instance("loop surfaces content-filter finishes as session errors", () =>
   }),
 )
 
+it.instance("loop auto-continues when assistant finish reason is length", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Length Continuation" })
+
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Write a long answer" }],
+    })
+
+    // Step 1: Model response cut off due to token limit (finish: length)
+    yield* llm.push(reply().text("First part of long reasoning/code...").length())
+    // Step 2: Auto-continuation receives the prompt and finishes with stop
+    yield* llm.push(reply().text("Second part completed!").stop())
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+
+    expect(yield* llm.hits).toHaveLength(2)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.finish).toBe("stop")
+    }
+    expect(result.parts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "text", text: "Second part completed!" })]),
+    )
+
+    // Verify the synthetic length-continuation user message exists in the transcript
+    const continuationUser = messages.find(
+      (m) =>
+        m.info.role === "user" &&
+        m.parts.some((p) => p.type === "text" && p.text.includes("<length-continuation>")),
+    )
+    expect(continuationUser).toBeDefined()
+  }),
+)
+
 it.instance("loop stops provider overflow instead of auto-compacting when disabled", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig((url) => ({
