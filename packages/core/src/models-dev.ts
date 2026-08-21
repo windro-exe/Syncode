@@ -249,6 +249,15 @@ export const BUILTIN_PROVIDERS: Record<string, Provider> = {
         ["text"],
         { field: "reasoning_content" },
       ),
+      "stealth/ox-alpha": orcarouterModel(
+        "stealth/ox-alpha",
+        "Ox Alpha (Stealth Reasoning)",
+        "2026-08-20",
+        1_048_576,
+        131_072,
+        ["text", "image", "video"],
+        { field: "reasoning_content" },
+      ),
     },
   },
 }
