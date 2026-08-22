@@ -763,6 +763,12 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
       xhigh: { reasoning: { effort: "xhigh" } },
     }
   }
+  const oxAlpha = id.includes("ox-alpha") || model.api.id.toLowerCase().includes("ox-alpha")
+  if (oxAlpha && model.api.npm === "@openrouter/ai-sdk-provider") {
+    return Object.fromEntries(
+      ["low", "medium", "high", "xhigh", "max"].map((effort) => [effort, { reasoning: { effort } }]),
+    )
+  }
   if (glm52 && model.api.npm === "@ai-sdk/openai-compatible") {
     return {
       high: { reasoningEffort: "high" },
@@ -1210,7 +1216,7 @@ export function options(input: {
     result["usage"] = {
       include: true,
     }
-    if (input.model.api.id.includes("gemini-3")) {
+    if (input.model.api.id.includes("gemini-3") || input.model.capabilities.reasoning) {
       result["reasoning"] = { effort: "high" }
     }
   }
