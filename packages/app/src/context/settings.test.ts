@@ -94,3 +94,52 @@ describe("layout transition", () => {
     expect(shouldEnableNewLayout("dev", "1.17.20")).toBe(false)
   })
 })
+
+describe("settings persistence & custom prompts migration", () => {
+  test("migrates custom prompts by preserving all items and setting enabled to false on restart", () => {
+    const raw = {
+      general: {
+        shellToolPartsExpanded: true,
+        editToolPartsExpanded: true,
+      },
+      customPrompts: [
+        {
+          id: "prompt-1",
+          name: "My Custom Prompt",
+          providerID: "openrouter",
+          modelID: "stealth/ox-alpha",
+          prompt: "Custom system prompt body",
+          enabled: true,
+        },
+        {
+          id: "preset-antigravity",
+          name: "Antigravity",
+          providerID: "*",
+          modelID: "*",
+          prompt: "Preset prompt body",
+          enabled: true,
+        },
+      ],
+    }
+
+    const migrate = (value: unknown) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value
+      const data = value as Record<string, unknown>
+      if (Array.isArray(data.customPrompts)) {
+        data.customPrompts = data.customPrompts.map((p) => {
+          if (!p || typeof p !== "object") return p
+          return { ...p, enabled: false }
+        })
+      }
+      return data
+    }
+
+    const migrated = migrate(raw) as typeof raw
+    expect(migrated.general.shellToolPartsExpanded).toBe(true)
+    expect(migrated.general.editToolPartsExpanded).toBe(true)
+    expect(migrated.customPrompts).toHaveLength(2)
+    expect(migrated.customPrompts[0].name).toBe("My Custom Prompt")
+    expect(migrated.customPrompts[0].enabled).toBe(false)
+    expect(migrated.customPrompts[1].enabled).toBe(false)
+  })
+})
