@@ -1185,12 +1185,26 @@ const layer = Layer.effect(
               })
             }
 
-            // Auto-continuation on length truncation: if the model was cut off mid-generation
-            // by the token budget (finish === "length"), inject a synthetic continuation turn
-            // to allow the model to finish the task/thought autonomously (capped at 5 iterations).
-            if (lastAssistant.finish === "length") {
-              const MAX_LENGTH_CONTINUATIONS = 5
-              const lengthContinuations = msgs.filter(
+            const hasText =
+              lastAssistantMsg?.parts.some(
+                (part) => part.type === "text" && part.text.trim().length > 0,
+              ) ?? false
+
+            const hasReasoning =
+              lastAssistantMsg?.parts.some(
+                (part) => part.type === "reasoning" && part.text.trim().length > 0,
+              ) ?? false
+
+            const isReasoningOnly = hasReasoning && !hasText && !hasToolCalls
+            const isLengthTruncated = lastAssistant.finish === "length"
+
+            // Auto-continuation: if the model was cut off mid-generation (finish === "length")
+            // OR if the model stopped after thinking without producing any text response or tool calls
+            // (isReasoningOnly), inject a synthetic continuation turn to allow the model to finish
+            // the task/thought autonomously (capped at 5 iterations).
+            if (isLengthTruncated || isReasoningOnly) {
+              const MAX_AUTO_CONTINUATIONS = 5
+              const autoContinuations = msgs.filter(
                 (m) =>
                   m.info.role === "user" &&
                   m.parts.some(
@@ -1198,11 +1212,11 @@ const layer = Layer.effect(
                       p.type === "text" &&
                       p.synthetic &&
                       typeof p.text === "string" &&
-                      p.text.includes("<length-continuation>"),
+                      (p.text.includes("<length-continuation>") || p.text.includes("<reasoning-continuation>")),
                   ),
               ).length
 
-              if (lengthContinuations < MAX_LENGTH_CONTINUATIONS) {
+              if (autoContinuations < MAX_AUTO_CONTINUATIONS) {
                 const continuationID = MessageID.ascending()
                 yield* sessions.updateMessage({
                   id: continuationID,
@@ -1218,17 +1232,24 @@ const layer = Layer.effect(
                   sessionID,
                   type: "text",
                   synthetic: true,
-                  text: [
-                    "<length-continuation>",
-                    "Your previous response was cut off because it reached the generation token limit (finish_reason: length).",
-                    "Please continue exactly where you left off without repeating any prior thoughts or text, and complete the remaining task.",
-                    "</length-continuation>",
-                  ].join("\n"),
+                  text: isReasoningOnly
+                    ? [
+                        "<reasoning-continuation>",
+                        "You have completed your thinking/reasoning phase. Please now proceed directly to fulfilling the user's request: provide your final response or invoke any necessary tools.",
+                        "</reasoning-continuation>",
+                      ].join("\n")
+                    : [
+                        "<length-continuation>",
+                        "Your previous response was cut off because it reached the generation token limit (finish_reason: length).",
+                        "Please continue exactly where you left off without repeating any prior thoughts or text, and complete the remaining task.",
+                        "</length-continuation>",
+                      ].join("\n"),
                 })
-                yield* Effect.logInfo("length.continue", {
+                yield* Effect.logInfo("prompt.auto_continue", {
                   sessionID,
                   assistantID: lastAssistant.id,
-                  iteration: lengthContinuations + 1,
+                  reason: isReasoningOnly ? "reasoning_only" : "length_truncated",
+                  iteration: autoContinuations + 1,
                 })
                 continue
               }
