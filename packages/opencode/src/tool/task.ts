@@ -210,7 +210,15 @@ export const TaskTool = Tool.define(
           agent: next.name,
           parts,
         })
-        return result.parts.findLast((item) => item.type === "text")?.text ?? ""
+        const text = result.parts.findLast(
+          (item): item is SessionV1.TextPart => item.type === "text" && item.text.trim().length > 0,
+        )?.text
+        if (text) return text
+        const reasoning = result.parts.findLast(
+          (item): item is SessionV1.ReasoningPart => item.type === "reasoning" && item.text.trim().length > 0,
+        )?.text
+        if (reasoning) return reasoning
+        return ""
       })
 
       const inject = Effect.fn("TaskTool.injectBackgroundResult")(function* (
