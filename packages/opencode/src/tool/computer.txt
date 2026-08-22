@@ -1,0 +1,26 @@
+Control this Windows PC: capture the screen, inspect UI elements, and move the real mouse/keyboard.
+
+## The loop
+
+1. `screenshot` or `observe` to see the screen
+2. one input action (`click`, `type`, `key`, ...)
+3. re-observe before the next decision — never assume the UI changed the way you expected
+
+## Actions
+
+- `screenshot` — full-screen PNG. Coordinates you pass to other actions are in THIS image's pixel space, not physical screen pixels.
+- `observe` — screenshot + numbered boxes over every interactable UI element, plus a legend of `{id, role, name}`. PREFERRED over plain screenshot: clicking a `ref` number is deterministic and survives layout shifts; raw coordinates do not.
+- `click` / `double_click` / `right_click` — target by `ref` (from your last observe) or by `x`,`y`. Prefer `ref`.
+- `type` — types `text` into whatever has keyboard focus. Focus the field first.
+- `key` — key combos/sequences in `text`: space-separated tokens like `ctrl+s`, `alt+f4`, `enter`, `down down enter`. Use `type` for literal text.
+- `scroll` — `direction` (up/down/left/right) and `amount` (wheel clicks, default 3) at optional `x`,`y`.
+- `move` — move the pointer to `x`,`y` without clicking.
+- `drag` — press at `x`,`y`, interpolate to `to_x`,`to_y`, release.
+- `window` — no `text`: list windows. With `text`: focus/restore the first window whose title contains it.
+
+## Rules
+
+- Coordinates are ALWAYS relative to the most recent image you received. If the window has moved/resized since, take a fresh one.
+- After an input action, verify with a fresh screenshot/observe before continuing. If nothing changed, the click may have landed on a non-responsive element — try `ref`, or focus the window first via `window`.
+- Elevated (admin) windows, UAC prompts, and the lock screen reject synthetic input. Don't retry those.
+- Keep screenshots sparse: after `type`/`key` a textual confirmation is often enough until the next decision point.
