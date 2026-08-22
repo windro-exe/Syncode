@@ -1,7 +1,7 @@
 import { createStore, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { persisted } from "@/utils/persist"
+import { Persist, persisted } from "@/utils/persist"
 import { usePlatform } from "@/context/platform"
 
 export interface NotificationSettings {
@@ -351,7 +351,25 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
   gate: false,
   init: () => {
     const platform = usePlatform()
-    const [store, setStore, settingsInit, ready] = persisted("settings.v3", createStore<Settings>(defaultSettings))
+    const [store, setStore, settingsInit, ready] = persisted(
+      {
+        ...Persist.global("settings", ["settings.v3", "settings.v2", "settings.v1"]),
+        migrate(value) {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return value
+          const data = value as Record<string, unknown>
+
+          // On app restart, keep all custom prompts in the list, but turn off active status (enabled: false)
+          if (Array.isArray(data.customPrompts)) {
+            data.customPrompts = data.customPrompts.map((p) => {
+              if (!p || typeof p !== "object") return p
+              return { ...p, enabled: false }
+            })
+          }
+          return data
+        },
+      },
+      createStore<Settings>(defaultSettings),
+    )
     const [launch, setLaunch, , launchReady] = persisted(
       "app-version.v1",
       createStore<{ version?: string }>({ version: undefined }),
@@ -399,6 +417,7 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     })
     const visible = (preference: () => boolean) => createMemo(() => !newLayoutDesigns() || preference())
     const initializeAgentVisibility = (existing: boolean) => {
+      if (!ready()) return
       const initial = initialAgentVisibility(store.general?.agentVisibilityInitialized, existing, launchState.previous)
       if (initial === undefined) return
       batch(() => {
@@ -472,6 +491,7 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     })
 
     createEffect(() => {
+      if (!ready()) return
       if (store.general?.followup !== "queue") return
       setStore("general", "followup", "steer")
     })
