@@ -715,6 +715,47 @@ it.instance("loop auto-continues when assistant finish reason is length", () =>
   }),
 )
 
+it.instance("loop auto-continues when assistant step finishes with reasoning only and no text", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Reasoning Only Continuation" })
+
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Solve this problem" }],
+    })
+
+    // Step 1: Model response finishes with stop but contains ONLY reasoning (0 text parts)
+    yield* llm.push(reply().reason("I should write the code in main.ts").stop())
+    // Step 2: Auto-continuation receives reasoning-continuation and generates the text
+    yield* llm.push(reply().text("Here is the solution in main.ts").stop())
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+
+    expect(yield* llm.hits).toHaveLength(2)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.finish).toBe("stop")
+    }
+    expect(result.parts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "text", text: "Here is the solution in main.ts" })]),
+    )
+
+    // Verify the synthetic reasoning-continuation user message exists in transcript
+    const continuationUser = messages.find(
+      (m) =>
+        m.info.role === "user" &&
+        m.parts.some((p) => p.type === "text" && p.text.includes("<reasoning-continuation>")),
+    )
+    expect(continuationUser).toBeDefined()
+  }),
+)
+
 it.instance("loop stops provider overflow instead of auto-compacting when disabled", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig((url) => ({
