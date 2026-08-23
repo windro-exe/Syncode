@@ -324,8 +324,7 @@ function normalizeMessages(
 
   if (
     typeof model.capabilities.interleaved === "object" &&
-    model.capabilities.interleaved.field &&
-    model.api.npm !== "@openrouter/ai-sdk-provider"
+    model.capabilities.interleaved.field
   ) {
     const field = model.capabilities.interleaved.field
     return msgs.map((msg) => {
@@ -349,6 +348,10 @@ function normalizeMessages(
               // reasoning_content families (deepseek, qwen, kimi, ...) reject a
               // later request whose assistant messages drop the field — empty
               // included — while thinking mode is active.
+              ...(field === "reasoning_content" || reasoningText ? { [field]: reasoningText } : {}),
+            },
+            openrouter: {
+              ...msg.providerOptions?.openrouter,
               ...(field === "reasoning_content" || reasoningText ? { [field]: reasoningText } : {}),
             },
           },
@@ -492,7 +495,7 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
 
   // Remap providerOptions keys from stored providerID to expected SDK key
   const key = sdkKey(model.api.npm)
-  if (key && key !== model.providerID) {
+  if (key && key !== model.providerID && model.api.npm !== "@ai-sdk/openai-compatible") {
     const remap = (opts: Record<string, any> | undefined) => {
       if (!opts) return opts
       if (!(model.providerID in opts)) return opts
