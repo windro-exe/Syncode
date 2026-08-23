@@ -1910,6 +1910,74 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
     expect(result[0].providerOptions?.openaiCompatible?.reasoning_content).toBe("Let me think about this...")
   })
 
+  test("OpenRouter ox-alpha extracts reasoning into providerOptions for multi-turn tool calling", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Planning the tool call..." },
+          {
+            type: "tool-call",
+            toolCallId: "call_123",
+            toolName: "view_file",
+            input: { path: "src/index.ts" },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(
+      msgs,
+      {
+        id: ModelV2.ID.make("openrouter/stealth/ox-alpha"),
+        providerID: ProviderV2.ID.make("openrouter"),
+        api: {
+          id: "stealth/ox-alpha",
+          url: "https://openrouter.ai/api/v1",
+          npm: "@openrouter/ai-sdk-provider",
+        },
+        name: "Ox Alpha",
+        capabilities: {
+          temperature: true,
+          reasoning: true,
+          attachment: true,
+          toolcall: true,
+          input: { text: true, audio: false, image: true, video: true, pdf: false },
+          output: { text: true, audio: false, image: false, video: false, pdf: false },
+          interleaved: {
+            field: "reasoning_content",
+          },
+        },
+        cost: {
+          input: 0.001,
+          output: 0.002,
+          cache: { read: 0.0001, write: 0.0002 },
+        },
+        limit: {
+          context: 1048576,
+          output: 131072,
+        },
+        status: "active",
+        options: {},
+        headers: {},
+        release_date: "2026-08-20",
+      },
+      {},
+    )
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toEqual([
+      {
+        type: "tool-call",
+        toolCallId: "call_123",
+        toolName: "view_file",
+        input: { path: "src/index.ts" },
+      },
+    ])
+    expect(result[0].providerOptions?.openrouter?.reasoning_content).toBe("Planning the tool call...")
+    expect(result[0].providerOptions?.openaiCompatible?.reasoning_content).toBe("Planning the tool call...")
+  })
+
   test("DeepSeek echoes empty reasoning_content back on assistant messages", () => {
     const msgs = [
       {
